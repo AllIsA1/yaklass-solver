@@ -1,0 +1,25 @@
+# systemd-юнит. Установка:
+#   sudo cp deploy/yaklass-solver.service /etc/systemd/system/
+#   (пути и User подставляет deploy/install-server.sh) sudo systemctl daemon-reload && sudo systemctl enable --now yaklass-solver
+[Unit]
+Description=yaklass-solver server (API + Telegram bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yaklass
+WorkingDirectory=/opt/yaklass-solver
+EnvironmentFile=/opt/yaklass-solver/.env
+ExecStart=/opt/yaklass-solver/.venv/bin/yaklass-server
+Restart=on-failure
+RestartSec=5
+# минимальные привилегии
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/yaklass-solver/data
+
+[Install]
+WantedBy=multi-user.target

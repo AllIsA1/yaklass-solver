@@ -1,0 +1,44 @@
+# Создано `yaklass-bot setup`; можно править вручную, мастер можно запускать повторно.
+
+[yaklass]
+base_url = "https://www.yaklass.ru"
+
+[browser]
+# chrome | chromium | firefox | edge | brave | opera | opera_gx | vivaldi | librewolf | safari | arc
+name = "chrome"
+cookie_file = ""
+
+[watch]
+interval_min = 12
+jitter_min = 4
+
+[llm.api]
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+# ключ: сначала переменная окружения api_key_env, затем файл api_key_file
+api_key_env = "OPENAI_API_KEY"
+api_key_file = ""
+temperature = 0.0
+vision = true
+json_mode = false
+
+[run]
+# "" = встроенный Chromium Playwright; "chrome" / "msedge" = установленный браузер
+channel = ""
+min_confidence = 0.5
+# User-Agent браузера (пусто = по умолчанию)
+user_agent = ""
+
+[search]
+# mode: always — поиск перед каждым ответом (рекомендуется) | model — модель решает сама | off
+searxng_url = ""
+mode = "always"
+results = 6
+fetch_pages = 3
+# сколько символов найденного отдавать модели (не больше окна контекста модели!)
+context_chars = 4000
+# пропускать поиск, если модель считает задание чисто вычислительным (уравнения, разложение и т.п.)
+skip_computational = true
+
+[storage]
+dir = ""

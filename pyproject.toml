@@ -1,0 +1,40 @@
+[project]
+name = "yaklass-bot"
+version = "0.1.0"
+description = "Помощник для проверочных работ ЯКласс: уведомления, парсинг, решение через LLM"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4",
+    "lxml",
+    "requests",
+    "browser_cookie3",
+    "platformdirs",
+]
+
+[project.optional-dependencies]
+browser = ["playwright"]      # режим run: заполнение форм в браузере
+gui = ["PySide6-Essentials", "websocket-client", "keyring", "playwright"]
+server = ["fastapi", "uvicorn[standard]", "aiogram>=3.4", "pydantic>=2"]
+dev = ["pytest", "httpx"]
+
+[project.scripts]
+yaklass-bot = "yaklass_bot.cli:main"
+yaklass-server = "yaklass_server.main:run"
+yaklassctl = "yaklass_server.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project.gui-scripts]
+yaklass-app = "yaklass_app.__main__:main"
+
+[tool.setuptools]
+packages = ["yaklass_bot", "yaklass_bot.solver", "yaklass_server", "yaklass_app", "yaklass_app.gui"]
+
+[tool.setuptools.package-data]
+yaklass_bot = ["config.example.toml"]
+yaklass_app = ["assets/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "server_tests", "app_tests"]
