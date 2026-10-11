@@ -130,8 +130,8 @@ class MainWindow(QMainWindow):
         self.run_async(self.agent.refresh_works, lambda res, err: self.works.set_message(
             f"Не удалось: {err}" if err else ("" if res else "Новых работ нет или нужен вход в ЯКласс")))
 
-    def start_work(self, work_id: str, mode: str) -> None:
-        ok, why = self.agent.start_work(work_id, mode)
+    def start_work(self, work_id: str, mode: str, style=None) -> None:
+        ok, why = self.agent.start_work(work_id, mode, style=style)
         if not ok:
             QMessageBox.warning(self, "Не удалось запустить", why)
         else:

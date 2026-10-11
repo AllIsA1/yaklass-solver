@@ -24,6 +24,7 @@ HELP = (
     "/unlink — отвязать все приложения\n"
     "/status — состояние приложения и лимит\n"
     "/works — новые работы\n"
+    "/stealth &lt;работа&gt; &lt;время&gt; &lt;оценка&gt; — выполнить скрытно: за заданное время на оценку 3–5\n"
     "/pause, /resume, /stop — управление выполнением"
 )
 
@@ -122,6 +123,14 @@ def render_finished(ev: dict) -> str:
     work = f"Работа {esc(wid)}" if wid else "Работа"
     took = f" за {fmt_duration(ev['elapsed_s'])}" if isinstance(ev.get("elapsed_s"), int) else ""
     pct = round(100 * done / total) if total else 0
+    est = ev.get("est_percent")
+    if isinstance(est, (int, float)) and not isinstance(est, bool):   # скрытный режим: процент — по баллам
+        pct = round(est)
+        if ev.get("completed"):
+            return f"✅ {work} сделана{took} на ~{pct}%"
+        note = str(ev.get("note") or "")
+        return (f"⚠️ {work} НЕ завершена{took}: ожидаемый результат ~{pct}% — доделайте вручную"
+                + (f"\n{esc(note)}" if note else ""))
     if ev.get("completed"):
         return f"✅ {work} сделана{took} на {pct}% ({done}/{total})" if total else f"✅ {work} сделана{took}"
     note = str(ev.get("note") or "")

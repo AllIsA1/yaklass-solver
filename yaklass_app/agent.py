@@ -15,6 +15,7 @@ from yaklass_bot.autorun import STATUS_NAMES
 from yaklass_bot.guard import SiteBlocked, SiteChallenge
 from yaklass_bot.control import RunControl
 from yaklass_bot.solver import FatalSolveError, SolveError
+from yaklass_bot.stealth import RunStyle, fast_pace, stealth_pace
 from yaklass_bot.storage import works_table
 
 from . import __version__, solvers, updater
@@ -203,8 +204,14 @@ class Agent:
                 works = self.refresh_works()
                 self._send({"type": "works", "works": works[:10], "new": False})
             elif cmd == "start_work":
-                ok, why = self.start_work(str(msg.get("work_id", "")), msg.get("mode", "auto"), remote=True)
-                self._ack(cmd, ok, why)
+                try:
+                    style = RunStyle.parse(msg)
+                except ValueError as e:
+                    self._ack(cmd, False, f"Некорректный режим: {e}")
+                else:
+                    ok, why = self.start_work(str(msg.get("work_id", "")), msg.get("mode", "auto"), remote=True,
+                                              style=style)
+                    self._ack(cmd, ok, why)
             elif cmd == "pause":
                 self.pause()
             elif cmd == "resume":
@@ -314,7 +321,8 @@ class Agent:
             if self.store.load().check_updates:
                 self.check_updates()
 
-    def start_work(self, work_id: str, mode: str = "auto", remote: bool = False) -> tuple[bool, str]:
+    def start_work(self, work_id: str, mode: str = "auto", remote: bool = False,
+                   style: RunStyle | None = None) -> tuple[bool, str]:
         s = self.store.load()
         if remote and not s.remote_start_allowed:
             return False, "Удалённый запуск отключён в настройках приложения"
@@ -322,6 +330,9 @@ class Agent:
             return False, "Некорректный номер работы"
         if mode not in ("auto", "dry"):
             return False, "Некорректный режим"
+        style = style or RunStyle()
+        if (why := style.problems()):
+            return False, f"Некорректный режим выполнения: {why}"
         if self.state != "idle":
             return False, "Уже выполняется другая работа"
         try:
@@ -332,13 +343,18 @@ class Agent:
             return False, f"Не удалось подготовить решатель: {e}"
         self._control = RunControl()
         self._set_state("running", work_id)
-        threading.Thread(target=self._run_work, args=(work_id, mode, solver, self._control), daemon=True,
+        threading.Thread(target=self._run_work, args=(work_id, mode, solver, self._control, style), daemon=True,
                          name="run-work").start()
         return True, ""
 
-    def _run_work(self, work_id: str, mode: str, solver, control: RunControl) -> None:
+    def _run_work(self, work_id: str, mode: str, solver, control: RunControl, style: RunStyle | None = None) -> None:
         s = self.store.load()
-        pace = s.pace_obj().with_min_between(self.min_interval)
+        style = style or RunStyle()
+        base = fast_pace() if style.kind == "fast" else (
+            stealth_pace(s.pace_obj()) if style.stealth and mode == "auto" else s.pace_obj())
+        pace = base.with_min_between(self.min_interval)
+        if style.kind != "normal":
+            self.log(f"Режим выполнения: {style.label()}")
 
         def on_progress(done: int, total: int, note: str) -> None:
             self.emit("progress", work_id=work_id, done=done, total=total, note=note)
@@ -346,12 +362,13 @@ class Agent:
 
         try:
             res = self.backend.run_work(work_id, mode, lambda task, lg: solver.solve(task, lg), pace, control,
-                                        self.log, on_progress)
+                                        self.log, on_progress, style=style)
             summary = {STATUS_NAMES.get(k, k): v for k, v in res.summary().items()}
             payload = {"work_id": work_id, "completed": res.completed, "summary": summary, "note": res.note,
-                       "stopped": res.stopped, "fatal": res.fatal}
+                       "stopped": res.stopped, "fatal": res.fatal, "est_percent": res.est_percent}
             self.emit("finished", **payload)
-            self._send({"type": "finished", **{k: payload[k] for k in ("work_id", "completed", "summary", "note")}})
+            self._send({"type": "finished", **{k: payload[k] for k in ("work_id", "completed", "summary", "note")},
+                        **({"est_percent": res.est_percent} if res.est_percent is not None else {})})
         except Exception as e:  # noqa: BLE001
             self.log(f"Ошибка выполнения: {e}")
             self.emit("error", message=str(e))

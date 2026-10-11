@@ -207,3 +207,23 @@ def test_fatal_solver_error_aborts_run(env):
     res = autorun.execute(page, BASE, solve_fn, table, lambda m: None, pace=FAST)
     assert res.fatal == "дневной лимит исчерпан" and not res.completed and fake.completed == 0
     assert [p for p, _ in fake.submits] == [1, 2]                                 # дальше не идём
+
+
+def test_stealth_run_follows_plan_and_finishes(env, monkeypatch):
+    """Скрытный режим: набранная доля — в диапазоне оценки, оставленные задания не отправляются,
+    работа всё равно завершается; паузы идут по расписанию (здесь не спим, а считаем)."""
+    from yaklass_bot import stealth as st
+    slept = []
+    monkeypatch.setattr(st, "sleep", lambda control, s: slept.append(s))
+    page, cfg, fake, table = env
+    start(page)
+    res = run(env, style=st.RunStyle("stealth", 10, 4))
+    by = {}
+    for o in res.outcomes:
+        by.setdefault(o.status, []).append(o.position)
+    assert res.est_percent is not None and 66 <= res.est_percent <= 95, (res.est_percent, by)
+    left = by.get("left", [])
+    assert not set(left) & {p for p, _ in fake.submits}                    # пропущенные не отправлялись
+    assert len(res.outcomes) == 9 and not res.pending
+    assert res.completed and fake.completed == 1                           # завершили, хотя часть без ответа
+    assert slept and sum(slept) > 0

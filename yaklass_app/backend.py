@@ -132,7 +132,8 @@ class Backend(ABC):
 
     @abstractmethod
     def run_work(self, work_id: str, mode: str, solve_fn, pace: Pace, control: RunControl,
-                 log: Callable[[str], None], on_progress: Callable[[int, int, str], None]) -> RunResult: ...
+                 log: Callable[[str], None], on_progress: Callable[[int, int, str], None],
+                 style=None) -> RunResult: ...
 
     @abstractmethod
     def login(self) -> None: ...
@@ -365,13 +366,14 @@ class PlaywrightBackend(Backend):
                     pass
         self._call(job)
 
-    def run_work(self, work_id, mode, solve_fn, pace, control, log, on_progress) -> RunResult:
+    def run_work(self, work_id, mode, solve_fn, pace, control, log, on_progress, style=None) -> RunResult:
         def job():
             self._close_lingering()
             s = self.store.load()
             base = s.base_url
             ctx, closer = self._open(headless=not s.show_browser)
             keep = False
+            max_points = time_limit_s = None
             try:
                 page = ctx.new_page()
                 page.goto(f"{base}/TestWorkRun/Preview/{work_id}")
@@ -385,11 +387,14 @@ class PlaywrightBackend(Backend):
                     info = parse_preview(page.content())
                     if not info.start_allowed:
                         return RunResult(note="Запуск невозможен: нет кнопки «Начать» или не осталось попыток")
+                    max_points = info.max_points
+                    time_limit_s = info.time_limit_min * 60 if info.time_limit_min else None
                     log(f"Нажимаю «{info.start_label}»" + ("" if info.is_continue else " (тратится попытка)"))
                     page.locator('#start-action-btn, form[action*="/TestWorkRun/Start/"] button').first.click()
                 wait_page_ready(page)
                 res = execute(page, base, solve_fn, tasks_table(self.dir), log, submit=(mode == "auto"), pace=pace,
-                              control=control, on_progress=on_progress, screenshot_dir=self.dir / "runs")
+                              control=control, on_progress=on_progress, screenshot_dir=self.dir / "runs",
+                              style=style, max_points=max_points, time_limit_s=time_limit_s)
                 if s.browser_mode == "profile":
                     self._snapshot(ctx)
                 keep = not res.completed and not res.fatal and not (res.stopped and mode == "auto")

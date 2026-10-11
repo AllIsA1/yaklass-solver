@@ -101,8 +101,9 @@ class FakeBackend(Backend):
         return [Work("111", "Алгебра", "Тема 1", 1_900_000_000_000, "/TestWorkRun/Preview/111"),
                 Work("222", "Геометрия", "Тема 2", None, "/TestWorkRun/Preview/222")]
 
-    def run_work(self, work_id, mode, solve_fn, pace, control, log, on_progress):
+    def run_work(self, work_id, mode, solve_fn, pace, control, log, on_progress, style=None):
         self.runs.append((work_id, mode, pace))
+        self.styles = getattr(self, "styles", []) + [style]
         res = RunResult()
         from yaklass_bot.control import Stopped
         from yaklass_bot.solver import FatalSolveError

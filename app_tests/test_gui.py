@@ -8,10 +8,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox  # noqa: E402
 
 from yaklass_app.agent import Agent  # noqa: E402
 from yaklass_app.gui.main_window import MainWindow  # noqa: E402
+from yaklass_app.gui.pages import RunDialog  # noqa: E402
 from yaklass_app.gui.widgets import Bridge  # noqa: E402
 from yaklass_app.settings import AppSettings, Store  # noqa: E402
 
@@ -97,15 +98,15 @@ def test_own_api_fields_visible_only_in_own_mode(ui):
 
 def test_start_requires_confirmation(ui, monkeypatch):
     got, warned = [], []
-    ui.win.works.start_requested.connect(lambda wid, mode: got.append((wid, mode)))
+    ui.win.works.start_requested.connect(lambda wid, mode, style: got.append((wid, mode, style.kind)))
     monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a[2])))
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.No))
+    monkeypatch.setattr(RunDialog, "exec", lambda self: QDialog.Rejected)
     ui.win.works._run("111", "Тема")
     assert got == [] and warned == []                                   # отказ — ничего не запущено
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
+    monkeypatch.setattr(RunDialog, "exec", lambda self: QDialog.Accepted)
     ui.win.works._run("111", "Тема")
     ui.win.works._dry("111")                                            # заполнение без отправки — без подтверждения
-    assert got == [("111", "auto"), ("111", "dry")]
+    assert got == [("111", "auto", "normal"), ("111", "dry", "normal")]
     assert len(warned) == 2 and "не привязано" in warned[0]             # приложение не привязано -> понятное предупреждение
     assert not ui.backend.runs
 

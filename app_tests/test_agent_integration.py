@@ -112,6 +112,29 @@ def test_remote_start_runs_work_with_server_solver_and_reports(setup):
     assert [a for a in setup.server.events_of("ack") if a["ok"]]
 
 
+def test_remote_start_passes_style_and_reports_estimate(setup):
+    from yaklass_bot.stealth import RunStyle
+    link_and_start(setup)
+    setup.server.command(1, {"cmd": "start_work", "work_id": "111", "mode": "auto", "style": "stealth",
+                             "minutes": 7, "grade": 4})
+    assert wait_for(lambda: setup.server.events_of("finished"), 10)
+    assert setup.backend.styles[-1] == RunStyle("stealth", 7.0, 4)
+    assert setup.agent.state == "idle" or wait_for(lambda: setup.agent.state == "idle")
+    assert wait_for(lambda: setup.agent.state == "idle")
+    setup.server.command(1, {"cmd": "start_work", "work_id": "111", "mode": "auto", "style": "fast"})
+    assert wait_for(lambda: len(setup.server.events_of("finished")) == 2, 10)
+    assert setup.backend.styles[-1] == RunStyle("fast")
+
+
+def test_invalid_style_is_rejected_by_agent(setup):
+    from yaklass_bot.stealth import RunStyle
+    link_and_start(setup)
+    ok, why = setup.agent.start_work("111", "auto", style=RunStyle("stealth", 7.0, 9))
+    assert not ok and "оценка" in why and not setup.backend.runs
+    ok, why = setup.agent.start_work("111", "auto", style=RunStyle("stealth", None, 4))
+    assert not ok and "время" in why
+
+
 def test_dry_mode_not_completed(setup):
     link_and_start(setup)
     ok, _ = setup.agent.start_work("111", "dry")

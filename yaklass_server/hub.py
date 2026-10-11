@@ -12,6 +12,8 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from yaklass_bot.stealth import RunStyle
+
 # команды сервер -> агент
 COMMANDS = {"status", "list_works", "start_work", "pause", "resume", "stop"}
 # события агент -> сервер
@@ -38,6 +40,11 @@ def validate_command(cmd: dict) -> dict:
         if mode not in ("auto", "dry"):
             raise CommandError("mode: auto или dry")
         out.update(work_id=wid, mode=mode)
+        try:
+            style = RunStyle.parse(cmd)
+        except ValueError as e:
+            raise CommandError(f"режим выполнения: {e}") from None
+        out.update(style.to_command())
     return out
 
 

@@ -144,6 +144,15 @@ def test_problems_are_still_reported():
     assert "Некорректная" in asyncio.run(c.command(5, {"cmd": "start_work", "work_id": "x;y"}))
 
 
+def test_finished_message_uses_estimated_percent_in_stealth_mode():
+    ev = {"type": "finished", "work_id": "9", "completed": True, "elapsed_s": 432, "est_percent": 78.4,
+          "summary": {"новых ответов": 5, "оставлено": 3, "ошибки": 1}}
+    assert render_event(ev)[0] == "✅ Работа 9 сделана за 7 мин 12 с на ~78%"
+    ev.update(completed=False, note="не удалось завершить")
+    text = render_event(ev)[0]
+    assert text.startswith("⚠️ Работа 9 НЕ завершена за 7 мин 12 с") and "~78%" in text
+
+
 def test_no_separate_messages_for_connection_and_state():
     assert render_event({"type": "hello", "device": "pc"}) == ("", [])
     assert render_event({"type": "status", "state": "idle"}) == ("", [])

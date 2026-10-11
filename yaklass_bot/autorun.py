@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from .runner import choose_work, handle_preview, resolve_url, wait_page_ready
 from .session import DEFAULT_UA, load_cookies, to_playwright_cookies
 from .solver import FatalSolveError, SolveError, make_provider
 from .solver.base import Answer
+from .stealth import RunStyle, Stealth, corrupt
 from .storage import tasks_table
 
 NEW_BTN = "#submitAnswerBtn"          # «Ответить» — на задание ещё нет ответа
@@ -49,6 +51,7 @@ class Outcome:
     position: int
     title: str
     # answered | rewritten | unchanged | skipped_done | filled (без отправки) | theory | unsupported | failed | timeout
+    # | left (скрытный режим: задание намеренно оставлено без ответа)
     status: str
     note: str = ""
     confidence: float | None = None
@@ -56,7 +59,7 @@ class Outcome:
 
 STATUS_NAMES = {"answered": "новых ответов", "rewritten": "переписано", "unchanged": "без изменений",
                 "skipped_done": "пропущено", "theory": "теория", "unsupported": "без поддержки",
-                "failed": "ошибки", "timeout": "не успели", "filled": "заполнено"}
+                "failed": "ошибки", "timeout": "не успели", "filled": "заполнено", "left": "оставлено"}
 SENT = ("answered", "rewritten", "unchanged", "skipped_done")
 PENDING = ("failed", "unsupported", "timeout")
 
@@ -68,6 +71,8 @@ class RunResult:
     stopped: bool = False            # остановлено пользователем
     fatal: str = ""                  # причина аварийной остановки (лимит, сервер недоступен)
     note: str = ""
+    est_percent: float | None = None  # скрытный режим: ожидаемый процент выполнения (в предположении верных ответов)
+    stealth: "Stealth | None" = None  # состояние скрытного прохода (для итогов)
 
     @property
     def pending(self) -> list[Outcome]:
@@ -162,7 +167,8 @@ def _wait_task_page(page) -> None:
 
 
 def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool = True,
-            pace: Pace | None = None, control: RunControl | None = None) -> Outcome:
+            pace: Pace | None = None, control: RunControl | None = None,
+            stealth: Stealth | None = None) -> Outcome:
     pace = pace or Pace()
     html = page.content()
     if page_kind(html) == "other":
@@ -174,12 +180,17 @@ def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool 
     if task.is_theory or (not task.fields and _read_button(page, theory=False) is not None):
         if not submit:
             return Outcome(**base, status="theory", note="без отправки — «Прочитано» не нажато")
-        pace.wait(pace.before_submit, control)
+        if stealth:
+            stealth.sleep(stealth.slice_for(task), control)        # «читает» теорию
+        else:
+            pace.wait(pace.before_submit, control)
         ok, note = mark_theory_read(page, task.is_theory)
         if not ok and "уже отмечено" not in note:
             return Outcome(**base, status="failed", note=f"не удалось отметить теорию: {note}")
         return Outcome(**base, status="theory", note=note)
     if not task.supported:
+        if stealth:
+            stealth.planner.observe(task)
         return Outcome(**base, status="unsupported", note="аудио или нет полей ответа")
     if task.time_left_s is not None and task.time_left_s < MIN_SECONDS_LEFT:
         return Outcome(**base, status="timeout", note=f"осталось {task.time_left_s} с")
@@ -188,26 +199,55 @@ def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool 
     t0 = time.time()
     if control:
         control.checkpoint()
+    plan = None
+    slice_s = 0.0
+    if stealth:
+        slice_s = stealth.slice_for(task)
+        plan = stealth.planner.decide(task, stealth.after)
+        if plan.kind == "skip":
+            stealth.sleep(slice_s * random.uniform(0.35, 0.6), control)    # «посмотрел» и пошёл дальше
+            stealth.planner.commit(plan, None)
+            return Outcome(**base, status="left", note="оставлено без ответа по плану скрытного режима")
     try:
         answer = solve_fn(task, log)
     except FatalSolveError:
         raise
     except SolveError as e:
+        if stealth:
+            stealth.planner.commit(plan, None)
         return Outcome(**base, status="failed", note=f"нет ответа модели: {e}")
+    wrong: set[str] = set()
+    if plan is not None and plan.wrong:
+        values = dict(answer.values)
+        wrong = corrupt(task, values, plan.wrong, stealth.rng)
+        answer = Answer(values=values, confidence=answer.confidence, raw=answer.raw, evidence=answer.evidence)
+        log(f"  скрытный режим: намеренно неверно {len(wrong)} из {len(task.fields)} полей")
+    if stealth:
+        spare = slice_s - (time.time() - t0) - stealth.fill_estimate(task, answer.values, pace)
+        stealth.sleep(max(0.0, spare) * random.uniform(0.45, 0.65), control)     # «читает условие»
     results = fill_task(page, task, answer, pace, control)
     if not all(r.ok for r in results):
         time.sleep(1.0)
         results = fill_task(page, task, answer, pace, control)         # одна повторная попытка
     bad = [r for r in results if not r.ok]
     if bad:
+        if stealth:
+            stealth.planner.commit(plan, None)
         return Outcome(**base, status="failed", confidence=answer.confidence,
                        note="не удалось заполнить: " + "; ".join(f"{r.field} ({r.note or 'не встало'})" for r in bad))
     if not submit:
         return Outcome(**base, status="filled", confidence=answer.confidence)
-    pace.wait(pace.before_submit, control)
+    if stealth:
+        stealth.sleep(max(0.3, slice_s - (time.time() - t0)), control)
+    else:
+        pace.wait(pace.before_submit, control)
     ok, note, kind = submit_answer(page)
     if not ok:
+        if stealth:
+            stealth.planner.commit(plan, None)
         return Outcome(**base, status="failed", confidence=answer.confidence, note=f"сайт не принял ответ: {note}")
+    if stealth:
+        stealth.planner.commit(plan, wrong)
     table.upsert({"task_key": key, "work_id": key.split(":")[0], "position": task.position, "status": kind,
                   "answer_json": json.dumps(answer.values, ensure_ascii=False), "confidence": f"{answer.confidence:.2f}",
                   "spent_s": int(time.time() - t0)})
@@ -263,7 +303,9 @@ def finish_work(page, base_url: str, log: Log, finish_anyway: bool = False) -> b
 
 def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome], *, resume: bool = False,
                submit: bool = True, pace: Pace | None = None, control: RunControl | None = None,
-               on_progress: Callable[[int, int, str], None] | None = None) -> list[Outcome]:
+               on_progress: Callable[[int, int, str], None] | None = None, style: RunStyle | None = None,
+               max_points: float | None = None, time_limit_s: float | None = None,
+               result: "RunResult | None" = None) -> list[Outcome]:
     """Добавляет результаты в `outcomes` по мере выполнения (чтобы при остановке они не терялись)."""
     pace = pace or Pace()
     _wait_task_page(page)
@@ -280,6 +322,17 @@ def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome]
     positions = sorted(n.position for n in nav) or [first.position]
     total = len(positions)
     log(f"\nПопытка {attempt}: заданий {total}; прохожу с первого по последнее")
+    stealth = None
+    if style is not None and style.stealth and submit:
+        left = first.time_left_s if first.time_left_s is not None else time_limit_s
+        stealth = Stealth(style, positions=total, total_points=max_points, time_left_s=left)
+        log(f"Скрытный режим: {style.label().split(': ', 1)[1]}; ожидаемый результат ≈ "
+            f"{stealth.planner.target_percent:.0f}%; на выполнение отведено {int(stealth.target_s // 60)} мин "
+            f"{int(stealth.target_s % 60)} с")
+        if stealth.time_note:
+            log("  " + stealth.time_note)
+        if result is not None:
+            result.stealth = stealth
     for idx, pos in enumerate(positions):
         if control:
             control.checkpoint()
@@ -299,7 +352,9 @@ def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome]
         hrefs.update({n.position: n.href for n in parse_nav(page.content()) if n.href})
         hrefs[pos] = page.url
         log(f"\n── Задание {pos}/{total} ──")
-        o = do_task(page, solve_fn, table, key, log, submit=submit, pace=pace, control=control)
+        if stealth:
+            stealth.begin(idx)
+        o = do_task(page, solve_fn, table, key, log, submit=submit, pace=pace, control=control, stealth=stealth)
         o.position = o.position or pos
         outcomes.append(o)
         log(f"  результат: {o.status}" + (f" ({o.note})" if o.note else "")
@@ -316,13 +371,15 @@ def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome]
 def execute(page, base_url: str, solve_fn: SolveFn, table, log: Log, *, resume: bool = False,
             finish_anyway: bool = False, submit: bool = True, pace: Pace | None = None,
             control: RunControl | None = None, on_progress: Callable[[int, int, str], None] | None = None,
-            screenshot_dir: Path | None = None) -> RunResult:
+            screenshot_dir: Path | None = None, style: RunStyle | None = None,
+            max_points: float | None = None, time_limit_s: float | None = None) -> RunResult:
     """Проход по работе с первого задания до последнего и (при полном успехе) завершение.
     Страница `page` уже должна быть на первом/текущем задании."""
     res = RunResult()
     try:
         _work_loop(page, solve_fn, table, log, res.outcomes, resume=resume, submit=submit, pace=pace,
-                   control=control, on_progress=on_progress)
+                   control=control, on_progress=on_progress, style=style, max_points=max_points,
+                   time_limit_s=time_limit_s, result=res)
     except Stopped:
         res.stopped = True
         res.note = "остановлено пользователем"
@@ -335,9 +392,13 @@ def execute(page, base_url: str, solve_fn: SolveFn, table, log: Log, *, resume: 
         res.fatal = str(e)
         res.note = f"остановлено: {e}"
         return res
+    if res.stealth is not None:
+        res.est_percent = round(res.stealth.planner.expected_percent, 1)
     if not submit:
         res.note = "режим без отправки: ответы выставлены, но не отправлены"
         return res
+    if any(o.status == "left" for o in res.outcomes):
+        finish_anyway = True               # скрытный режим оставил задания без ответа намеренно
     if res.pending and not finish_anyway:
         res.note = "остались задания без ответа — работа не завершена, доделайте вручную"
         return res

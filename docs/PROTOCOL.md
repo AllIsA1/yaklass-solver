@@ -36,7 +36,9 @@
 
 **Сервер → агент** (только эти команды):
 `{"type":"cmd","cmd":"status|list_works|pause|resume|stop"}` и
-`{"type":"cmd","cmd":"start_work","work_id":"123456","mode":"auto|dry"}` (`work_id` — только цифры).
+`{"type":"cmd","cmd":"start_work","work_id":"123456","mode":"auto|dry","style":"normal|fast|stealth",
+"minutes":7.5,"grade":4}` (`work_id` — только цифры; `minutes` — от 1 до 240 и `grade` — 3/4/5 нужны только для
+`style: stealth`; без `style` — `normal`).
 
 **Агент → сервер** (остальные типы игнорируются; строки обрезаются до 500 символов):
 | type | поля |
@@ -44,7 +46,7 @@
 | `hello` | `device` |
 | `works` | `works: [{id, subject, title, deadline}]`, `new: bool` |
 | `progress` | `work_id, done, total, note` |
-| `finished` | `work_id, completed: bool, summary: {…}` |
+| `finished` | `work_id, completed: bool, summary: {…}, note`; в скрытном режиме ещё `est_percent` (ожидаемый процент) |
 | `error` | `message` |
 | `status` | `state: idle|running|paused, work_id` |
 | `ack` | `cmd, ok: bool, msg` |

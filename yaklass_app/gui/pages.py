@@ -4,9 +4,11 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton, QScrollArea,
                                QVBoxLayout, QWidget)
+
+from yaklass_bot.stealth import GRADE_BANDS, RunStyle
 
 from ..settings import AppSettings
 from .widgets import Card, NumField, Pill, form_row, label, row
@@ -244,9 +246,66 @@ class WorkCard(Card):
         self.body.addLayout(row(run, dry, None))
 
 
+_LAST_STYLE = {"kind": "normal", "min": 10, "sec": 0, "grade": 4}      # выбор запоминается до закрытия приложения
+
+
+class RunDialog(QDialog):
+    """Подтверждение запуска + выбор режима: обычный, быстрый или скрытный (время и оценка)."""
+
+    def __init__(self, parent, title: str):
+        super().__init__(parent)
+        self.setWindowTitle("Выполнить работу?")
+        lay = QVBoxLayout(self)
+        lay.addWidget(label(
+            f"«{title}»\n\nПриложение само нажмёт «Начать», ответит на задания и завершит работу. "
+            "Это может потратить попытку, и отменить результат нельзя.", wrap=True))
+        self.r_normal = QRadioButton("Обычный — с обычными паузами (настраиваются в «Настройках»)")
+        self.r_fast = QRadioButton("Быстрый — минимальные паузы")
+        self.r_stealth = QRadioButton("Скрытный — за заданное время и на заданную оценку")
+        for r in (self.r_normal, self.r_fast, self.r_stealth):
+            lay.addWidget(r)
+        self.stealth_box = QFrame()
+        sb = QVBoxLayout(self.stealth_box)
+        self.minutes = NumField(1, 240, _LAST_STYLE["min"], 0, width=70)
+        self.seconds = NumField(0, 59, _LAST_STYLE["sec"], 0, width=70)
+        sb.addLayout(row(label("Время:", wrap=False), self.minutes, label("мин", wrap=False), self.seconds,
+                         label("с", wrap=False), None))
+        self.grade = QComboBox()
+        for g, (lo, hi) in GRADE_BANDS.items():
+            self.grade.addItem(f"{g}  ({int(lo)}–{int(hi)}%)", g)
+        self.grade.setCurrentIndex(max(0, list(GRADE_BANDS).index(_LAST_STYLE["grade"])))
+        sb.addLayout(row(label("Оценка:", wrap=False), self.grade, None))
+        sb.addWidget(label(
+            "Часть заданий будет решена верно, часть оставлена без ответа, часть решена неверно или частично — "
+            "так, чтобы набрать процент из выбранного диапазона. Если время «ровное» (целые минуты), оно слегка "
+            "размывается (±57 с), но в лимит времени работы укладывается. Оценка ожидаемая: верность ответов "
+            "модели заранее неизвестна.", "hint"))
+        lay.addWidget(self.stealth_box)
+        {"fast": self.r_fast, "stealth": self.r_stealth}.get(_LAST_STYLE["kind"], self.r_normal).setChecked(True)
+        self.r_stealth.toggled.connect(self._sync)
+        self._sync()
+        ok, cancel = QPushButton("Выполнить"), QPushButton("Отмена")
+        ok.setObjectName("primary")
+        ok.clicked.connect(self.accept)
+        cancel.clicked.connect(self.reject)
+        lay.addLayout(row(None, cancel, ok))
+        self.setMinimumWidth(460)
+
+    def _sync(self) -> None:
+        self.stealth_box.setVisible(self.r_stealth.isChecked())
+
+    def style(self) -> RunStyle:
+        kind = "stealth" if self.r_stealth.isChecked() else ("fast" if self.r_fast.isChecked() else "normal")
+        mins, secs, grade = int(self.minutes.value()), int(self.seconds.value()), int(self.grade.currentData())
+        _LAST_STYLE.update(kind=kind, min=mins, sec=secs, grade=grade)
+        if kind == "stealth":
+            return RunStyle("stealth", mins + secs / 60.0, grade)
+        return RunStyle(kind)
+
+
 class WorksPage(Page):
     refresh_requested = Signal()
-    start_requested = Signal(str, str)         # work_id, mode
+    start_requested = Signal(str, str, object)  # work_id, mode, RunStyle
 
     def __init__(self):
         super().__init__("Работы", "Новые проверочные работы из вашего аккаунта ЯКласс")
@@ -275,16 +334,12 @@ class WorksPage(Page):
         self.status.setText(text)
 
     def _run(self, work_id: str, title: str):
-        ok = QMessageBox.question(
-            self, "Выполнить работу?",
-            f"«{title}»\n\nПриложение само нажмёт «Начать», ответит на все задания и завершит работу. "
-            "Это может потратить попытку, и отменить результат нельзя.\n\nПродолжить?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if ok == QMessageBox.Yes:
-            self.start_requested.emit(work_id, "auto")
+        dlg = RunDialog(self, title)
+        if dlg.exec() == QDialog.Accepted:
+            self.start_requested.emit(work_id, "auto", dlg.style())
 
     def _dry(self, work_id: str):
-        self.start_requested.emit(work_id, "dry")
+        self.start_requested.emit(work_id, "dry", RunStyle())
 
 
 # ============================================================ Настройки

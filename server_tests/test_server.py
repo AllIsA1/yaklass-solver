@@ -196,7 +196,14 @@ def test_image_allowlist_accepts_allowed_public_host(monkeypatch):
 
 def test_command_whitelist():
     assert validate_command({"cmd": "start_work", "work_id": "123", "mode": "dry"}) == \
-        {"type": "cmd", "cmd": "start_work", "work_id": "123", "mode": "dry"}
+        {"type": "cmd", "cmd": "start_work", "work_id": "123", "mode": "dry", "style": "normal"}
+    assert validate_command({"cmd": "start_work", "work_id": "1", "style": "stealth", "minutes": "7.5", "grade": 4,
+                             "x": "junk"}) == {"type": "cmd", "cmd": "start_work", "work_id": "1", "mode": "auto",
+                                               "style": "stealth", "minutes": 7.5, "grade": 4}
+    for bad in ({"style": "stealth"}, {"style": "stealth", "minutes": 5, "grade": 1}, {"style": "x"},
+                {"style": "stealth", "minutes": 1000, "grade": 4}):
+        with pytest.raises(CommandError):
+            validate_command({"cmd": "start_work", "work_id": "1", **bad})
     for bad in [{"cmd": "exec", "x": "rm -rf /"}, {"cmd": "start_work", "work_id": "https://evil"},
                 {"cmd": "start_work", "work_id": "1; rm"}, {"cmd": "start_work", "work_id": "1", "mode": "x"}, {}]:
         with pytest.raises(CommandError):
