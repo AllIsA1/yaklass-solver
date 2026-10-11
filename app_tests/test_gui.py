@@ -21,7 +21,12 @@ from .conftest import FakeBackend, RealServer  # noqa: E402
 
 @pytest.fixture(scope="module")
 def qapp():
-    return QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
+    yield app
+    for w in app.topLevelWidgets():              # убрать окна до завершения процесса: иначе Qt может упасть на выходе
+        w.close()
+        w.deleteLater()
+    app.processEvents()
 
 
 def pump(app, cond, timeout=8.0):
@@ -46,6 +51,8 @@ def ui(qapp, tmp_path):
     yield type("U", (), dict(app=qapp, win=win, store=store, agent=agent, backend=backend, bridge=bridge, tmp=tmp_path))
     agent._stop.set()
     win.hide()
+    win.deleteLater()                          # без этого Qt падает при завершении процесса (двойное удаление)
+    qapp.processEvents()
 
 
 def test_navigation_between_pages(ui):
@@ -128,6 +135,9 @@ def test_home_cards_are_not_squeezed_in_a_short_window(qapp):
         assert card.height() >= need, (card.height(), need)       # хватает места под перенос строк
     assert "Full Changelog" not in p.upd_notes.text() and "**" not in p.upd_notes.text()
     assert release_notes_text("**A**\n\n`b`") == "A\nb"
+    p.hide()
+    p.deleteLater()
+    qapp.processEvents()
 
 
 def test_short_status_texts_stay_on_one_line(ui):
@@ -150,6 +160,7 @@ def test_chips_and_version_are_capitalized_and_aligned(ui):
     from yaklass_app.gui.pages import WorkCard
     card = WorkCard({"id": "1", "subject": "биология", "title": "Т"}, True, lambda *a: None, lambda *a: None)
     assert [w.text() for w in card.findChildren(QLabel) if w.objectName() == "chip"] == ["Биология", "Новая"]
+    card.deleteLater()
     ver = next(w for w in ui.win.findChildren(QLabel) if w.objectName() == "version")
     assert ver.text().startswith("Версия ")
 
