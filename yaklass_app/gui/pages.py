@@ -250,7 +250,9 @@ class HomePage(Page):
 class WorkCard(Card):
     def __init__(self, work: dict, is_new: bool, on_run, on_dry):
         super().__init__()
-        top = row(label(work.get("subject", ""), "chip", wrap=False), label("новая", "chip", wrap=False) if is_new else None, None)
+        subject = str(work.get("subject", ""))
+        top = row(label(subject[:1].upper() + subject[1:], "chip", wrap=False),
+                  label("Новая", "chip", wrap=False) if is_new else None, None)
         self.body.addLayout(top)
         title = label(f"<b>{work.get('title', '')}</b>", wrap=True)
         self.body.addWidget(title)
@@ -331,7 +333,7 @@ class WorksPage(Page):
         self.refresh = QPushButton("Обновить")
         self.refresh.clicked.connect(self.refresh_requested.emit)
         self.status = label("", "muted")
-        self.content.addLayout(row(self.status, None, self.refresh))
+        self.content.addLayout(row(self.status, self.refresh, fill=self.status))
         self.list_host = QWidget()
         self.list = QVBoxLayout(self.list_host)
         self.list.setContentsMargins(0, 0, 0, 0)
@@ -482,7 +484,7 @@ class SettingsPage(Page):
                                   "Не чаще раза в 5 минут. Без этой опции список работ обновляется кнопкой «Обновить» и по команде из Telegram."))
         c.body.addWidget(form_row("Тема", self.theme))
         c.body.addWidget(self.check_updates)
-        c.body.addLayout(row(self.btn_check_updates, self.update_msg, None))
+        c.body.addLayout(row(self.btn_check_updates, self.update_msg, fill=self.update_msg))
         col.addWidget(c)
         col.addStretch(1)
         self.content.addWidget(scrolled(host), 1)
@@ -490,7 +492,7 @@ class SettingsPage(Page):
         self.btn_save = QPushButton("Сохранить")
         self.btn_save.setObjectName("primary")
         self.btn_save.clicked.connect(self._save)
-        self.content.addLayout(row(self.err, None, self.btn_save))
+        self.content.addLayout(row(self.err, self.btn_save, fill=self.err))
         self._base = AppSettings()
 
     def _toggle_own(self):

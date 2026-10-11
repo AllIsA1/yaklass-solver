@@ -38,6 +38,7 @@ QMainWindow, #root {{ background: {c['bg']}; }}
 #sidebar {{ background: {c['side']}; border-right: 1px solid {c['border']}; }}
 #brand {{ font-size: 17px; font-weight: 700; letter-spacing: 0.3px; }}
 #brandSub {{ color: {c['muted']}; font-size: 11px; }}
+#version {{ color: {c['muted']}; font-size: 11px; padding-left: 11px; }}     /* текст — вровень с текстом в «таблетке» */
 QPushButton#nav {{ text-align: left; padding: 10px 14px; border: none; border-radius: 10px; color: {c['muted']};
                   background: transparent; font-size: 14px; }}
 QPushButton#nav:hover {{ background: {c['surface2']}; color: {c['text']}; }}

@@ -130,6 +130,30 @@ def test_home_cards_are_not_squeezed_in_a_short_window(qapp):
     assert release_notes_text("**A**\n\n`b`") == "A\nb"
 
 
+def test_short_status_texts_stay_on_one_line(ui):
+    """Подписи рядом с кнопкой раньше сжимались до минимальной ширины и ломались на 2–3 строки."""
+    def one_line(lb):
+        ui.app.processEvents()
+        need = lb.heightForWidth(lb.width())              # высота подписи — по её ширине, а не по строке с кнопкой
+        assert need < 1.5 * lb.fontMetrics().lineSpacing(), (lb.text(), lb.width(), need)
+    ui.win.nav.button(1).click()
+    ui.win.works.set_works([])
+    ui.win.works.set_message("Новых работ нет или нужен вход в ЯКласс")
+    one_line(ui.win.works.status)
+    ui.win.nav.button(2).click()
+    ui.win.settings.update_msg.setText("✓ Вы используете последнюю версию (0.1.3)")
+    one_line(ui.win.settings.update_msg)
+
+
+def test_chips_and_version_are_capitalized_and_aligned(ui):
+    from PySide6.QtWidgets import QLabel
+    from yaklass_app.gui.pages import WorkCard
+    card = WorkCard({"id": "1", "subject": "биология", "title": "Т"}, True, lambda *a: None, lambda *a: None)
+    assert [w.text() for w in card.findChildren(QLabel) if w.objectName() == "chip"] == ["Биология", "Новая"]
+    ver = next(w for w in ui.win.findChildren(QLabel) if w.objectName() == "version")
+    assert ver.text().startswith("Версия ")
+
+
 def test_events_update_widgets(ui):
     def ev(n, **p):
         ui.bridge.event.emit(n, p)

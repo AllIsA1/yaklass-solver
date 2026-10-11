@@ -52,13 +52,17 @@ def label(text: str, name: str = "", wrap: bool = True) -> QLabel:
     return lb
 
 
-def row(*widgets, spacing: int = 10, stretch_last: bool = False) -> QHBoxLayout:
+def row(*widgets, spacing: int = 10, stretch_last: bool = False, fill: QWidget | None = None) -> QHBoxLayout:
+    """None — растяжка. `fill` — виджет, которому достаётся всё свободное место (для текста с переносом строк:
+    без этого такая подпись в одной строке с растяжкой сжимается до минимальной ширины и ломается на строки)."""
     r = QHBoxLayout()
     r.setContentsMargins(0, 0, 0, 0)
     r.setSpacing(spacing)
     for w in widgets:
         if w is None:
             r.addStretch(1)
+        elif w is fill:
+            r.addWidget(w, 1)
         else:
             r.addWidget(w)
     if stretch_last:
