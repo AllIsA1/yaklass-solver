@@ -35,6 +35,7 @@ REWRITE_BTN = "#correctAnswerBtn"     # «Сохранить» — ответ у
 SUBMIT_BTN = f"{NEW_BTN}, {REWRITE_BTN}"
 COMPLETE_BTN = ('form[action*="/TestWorkRun/CompleteTest"] button[type=submit], '
                 'form[action*="/TestWorkRun/CompleteTest"] input[type=submit]')
+READ_RX = re.compile(r"^\s*(прочитан|я прочитал|ознакомил)", re.I)   # кнопка на странице теории
 CONFIRM_RX = re.compile(r"^\s*(да|заверш|подтверд|ок\b|ok\b|сдать)", re.I)
 MIN_SECONDS_LEFT = 45         # меньше — уже не решаем, сразу к завершению
 SUBMIT_WAIT_S = 12
@@ -92,7 +93,6 @@ def _pw_error():
 def submit_answer(page) -> tuple[bool, str, str]:
     """Нажимает «Ответить» (новый ответ) или «Сохранить» (переписывание).
     Возвращает (успех, заметка, вид: answered | rewritten | unchanged)."""
-    PwError = _pw_error()
     rewrite = page.locator(REWRITE_BTN).count() > 0
     btn = page.locator(REWRITE_BTN if rewrite else NEW_BTN).first
     btn.scroll_into_view_if_needed()
@@ -103,22 +103,55 @@ def submit_answer(page) -> tuple[bool, str, str]:
             time.sleep(0.2)
         if btn.is_disabled():
             return True, "ответ совпадает с сохранённым — менять нечего", "unchanged"
+    ok, note = _click_and_wait(page, btn)
+    return ok, note, "rewritten" if rewrite else "answered"
+
+
+def _click_and_wait(page, btn) -> tuple[bool, str]:
+    """Клик и ожидание реакции страницы: переход/перезагрузка — успех, текст в #errorSummary — отказ."""
+    PwError = _pw_error()
     before = page.url
     page.evaluate("window.__yk_marker = 1")
     btn.click()
-    kind = "rewritten" if rewrite else "answered"
     end = time.time() + SUBMIT_WAIT_S
     while time.time() < end:
         time.sleep(0.4)
         try:
             if page.url != before or page.evaluate("window.__yk_marker === undefined"):
-                return True, "", kind
+                return True, ""
             err = page.locator("#errorSummary").inner_text().strip()
             if err:
-                return False, err, kind
+                return False, err
         except PwError:
-            return True, "", kind        # контекст уничтожен — страница уходит на другой адрес
-    return True, "явного подтверждения отправки нет (возможно, ответ принят без перезагрузки)", kind
+            return True, ""              # контекст уничтожен — страница уходит на другой адрес
+    return True, "явного подтверждения отправки нет (возможно, ответ принят без перезагрузки)"
+
+
+def _read_button(page, theory: bool = True):
+    """Кнопка «Прочитано» (или None). Разметка не сверена с живым сайтом: ищем по подписи среди кнопок
+    и ссылок; на странице, опознанной как теория, ещё и обычную кнопку отправки (отвечать там нечего)."""
+    cands = [page.get_by_role("button", name=READ_RX), page.get_by_role("link", name=READ_RX)]
+    if theory:
+        cands.append(page.locator(NEW_BTN))
+    for loc in cands:
+        if _visible(loc):
+            return loc.first
+    return None
+
+
+def mark_theory_read(page, theory: bool = True) -> tuple[bool, str]:
+    """-> (нажато, заметка). Уже прочитанная теория (кнопки нет) — не ошибка."""
+    btn = _read_button(page, theory)
+    if btn is None:
+        return False, "кнопки «Прочитано» нет — вероятно, уже отмечено"
+    try:
+        if btn.is_disabled():
+            return False, "кнопка «Прочитано» неактивна — вероятно, уже отмечено"
+    except Exception:  # noqa: BLE001
+        pass
+    btn.scroll_into_view_if_needed()
+    ok, note = _click_and_wait(page, btn)
+    return ok, ("отмечено «Прочитано»" if ok and not note else note)
 
 
 def _wait_task_page(page) -> None:
@@ -137,8 +170,15 @@ def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool 
         return Outcome(0, "", "failed", f"неожиданная страница: {page.url}")
     task = parse_exercise(html)
     base = dict(position=task.position, title=task.title)
-    if task.is_theory:
-        return Outcome(**base, status="theory")
+    # теория; или страница без полей с кнопкой «Прочитано» (заголовок блока мог быть не «Теория»)
+    if task.is_theory or (not task.fields and _read_button(page, theory=False) is not None):
+        if not submit:
+            return Outcome(**base, status="theory", note="без отправки — «Прочитано» не нажато")
+        pace.wait(pace.before_submit, control)
+        ok, note = mark_theory_read(page, task.is_theory)
+        if not ok and "уже отмечено" not in note:
+            return Outcome(**base, status="failed", note=f"не удалось отметить теорию: {note}")
+        return Outcome(**base, status="theory", note=note)
     if not task.supported:
         return Outcome(**base, status="unsupported", note="аудио или нет полей ответа")
     if task.time_left_s is not None and task.time_left_s < MIN_SECONDS_LEFT:

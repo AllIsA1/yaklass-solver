@@ -93,9 +93,11 @@ def create_app(settings: Settings, db: Db, hub: Hub, solver: SolverService) -> F
         if wait:
             raise HTTPException(429, "слишком часто", headers={"Retry-After": str(int(wait) + 1)})
         limit = quota_of(p.user)
-        ok, used = db.try_consume(p.tg_id, limit)
-        if not ok:
-            raise HTTPException(429, f"дневной лимит {limit} запросов исчерпан")
+        verdict, used, new_run = db.begin_solve(p.tg_id, req.run_id, limit, settings.max_solves_per_run)
+        if verdict == "quota":
+            raise HTTPException(429, f"дневной лимит {limit} запусков работ исчерпан")
+        if verdict == "run_cap":
+            raise HTTPException(429, f"лимит {settings.max_solves_per_run} заданий на один запуск исчерпан")
         task = req.task.to_task()
         if settings.log_tasks:
             log.info("solve tg_id=%s task=%r", p.tg_id, task.text[:200])
@@ -103,10 +105,10 @@ def create_app(settings: Settings, db: Db, hub: Hub, solver: SolverService) -> F
             async with sem:
                 ans = await asyncio.to_thread(solver.solve, task)
         except SolveError as e:
-            db.refund(p.tg_id)                         # не по вине пользователя — запрос не списываем
+            db.end_failed_solve(p.tg_id, req.run_id, new_run)     # не по вине пользователя — не списываем
             raise HTTPException(502, f"модель не дала ответа: {e}") from e
         except Exception:  # noqa: BLE001
-            db.refund(p.tg_id)
+            db.end_failed_solve(p.tg_id, req.run_id, new_run)
             log.exception("solve failed")
             raise HTTPException(500, "внутренняя ошибка решателя") from None
         return SolveResponse(answers=ans.values, confidence=ans.confidence, evidence=ans.evidence,

@@ -45,6 +45,7 @@ class TaskIn(BaseModel):
 
 class SolveRequest(BaseModel):
     task: TaskIn
+    run_id: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{8,64}$")   # один запуск работы = 1 из квоты
 
 
 class SolveResponse(BaseModel):

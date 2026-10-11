@@ -59,7 +59,7 @@ def test_remote_solver_error_mapping(monkeypatch):
     with pytest.raises(FatalSolveError, match="отвязано"):
         solver_with(R(401)).solve(sample_task())
     with pytest.raises(FatalSolveError, match="лимит"):
-        solver_with(R(429, "дневной лимит 300 запросов исчерпан")).solve(sample_task())
+        solver_with(R(429, "дневной лимит 20 запусков работ исчерпан")).solve(sample_task())
     with pytest.raises(SolveError) as e:                                  # 502 — не фатально: следующее задание можно пробовать
         solver_with(R(502, "модель не дала ответа")).solve(sample_task())
     assert not isinstance(e.value, FatalSolveError)
@@ -163,7 +163,7 @@ def test_pause_resume_stop_from_telegram(setup):
 def test_quota_exhaustion_stops_the_run(tmp_path):
     from .conftest import FakeBackend, RealServer
     from yaklass_app.agent import Agent
-    srv = RealServer(quota=2)
+    srv = RealServer(quota=1)
     try:
         store = Store(tmp_path / "c", use_keyring=False)
         store.save(AppSettings(server_url=srv.url))
@@ -172,11 +172,15 @@ def test_quota_exhaustion_stops_the_run(tmp_path):
         agent.link(srv.new_code())
         agent.start()
         assert wait_for(lambda: agent.connected)
-        agent.start_work("111", "auto")
+        agent.start_work("111", "auto")                              # квота — 1 запуск: все 3 задания проходят
         assert wait_for(lambda: srv.events_of("finished"), 10)
-        fin = srv.events_of("finished")[0]
+        assert len(srv.model.prompts) == 3 and "лимит" not in srv.events_of("finished")[0]["note"]
+        assert wait_for(lambda: agent.state == "idle")
+        agent.start_work("111", "auto")                              # второй запуск — уже сверх квоты
+        assert wait_for(lambda: len(srv.events_of("finished")) == 2, 10)
+        fin = srv.events_of("finished")[1]
         assert fin["completed"] is False and "лимит" in fin["note"]
-        assert len(srv.model.prompts) == 2                             # третий запрос не прошёл
+        assert len(srv.model.prompts) == 3                             # второй запуск модель не вызвал
         agent.shutdown()
     finally:
         srv.stop()

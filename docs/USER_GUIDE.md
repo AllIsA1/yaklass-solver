@@ -144,7 +144,8 @@ journalctl -u yaklass-solver -f              # журнал
 | `ADMIN_IDS` | ваши Telegram id через запятую (проходят регистрацию всегда); свой id можно узнать у бота @userinfobot |
 | `REGISTRATION` | `open` — любой, `invite` — по приглашению, `closed` — только добавленные вами |
 | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | общая модель для всех пользователей; `LLM_VISION`, `LLM_JSON_MODE` — как в приложении |
-| `DAILY_QUOTA`, `RATE_PER_MIN`, `MAX_CONCURRENT_SOLVES` | лимиты: **расходы на модель оплачиваете вы** |
+| `DAILY_QUOTA` | запусков работ в сутки на пользователя (один запуск — одна единица, сколько бы в нём ни было заданий) |
+| `MAX_SOLVES_PER_RUN`, `RATE_PER_MIN`, `MAX_CONCURRENT_SOLVES` | прочие лимиты: **расходы на модель оплачиваете вы** |
 | `SEARXNG_URL`, `SEARCH_MODE` | поиск перед ответом (`always` / `model` / `off`) |
 
 Комментарии в `.env` пишите отдельными строками, не в конце строки со значением.

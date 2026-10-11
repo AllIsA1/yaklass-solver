@@ -49,7 +49,8 @@ class Settings:
     # хранилище
     db_path: str = "data/server.db"
     # лимиты
-    daily_quota: int = 300               # запросов на решение в сутки на пользователя
+    daily_quota: int = 20                # запусков работ в сутки на пользователя (задания внутри запуска не считаются)
+    max_solves_per_run: int = 150        # заданий на один запуск (защита от бесконечного «одного запуска»)
     rate_per_min: int = 20
     max_concurrent_solves: int = 4
     max_body_bytes: int = 300_000
@@ -98,7 +99,8 @@ class Settings:
             admin_ids={int(x) for x in g("ADMIN_IDS").replace(" ", "").split(",") if x},
             registration=g("REGISTRATION", "open").lower(),
             db_path=g("DB_PATH", "data/server.db"),
-            daily_quota=i("DAILY_QUOTA", 300),
+            daily_quota=i("DAILY_QUOTA", 20),
+            max_solves_per_run=i("MAX_SOLVES_PER_RUN", 150),
             rate_per_min=i("RATE_PER_MIN", 20),
             max_concurrent_solves=i("MAX_CONCURRENT_SOLVES", 4),
             min_task_interval_s=i("MIN_TASK_INTERVAL_S", 0),

@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS agents(
   name TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, last_seen INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS usage(
   tg_id INTEGER NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(tg_id, day));
+CREATE TABLE IF NOT EXISTS runs(
+  tg_id INTEGER NOT NULL, run_id TEXT NOT NULL, created_at INTEGER NOT NULL, solves INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(tg_id, run_id));
 CREATE TABLE IF NOT EXISTS invites(
   code TEXT PRIMARY KEY, uses_left INTEGER NOT NULL, created_at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '');
 """
@@ -153,6 +156,41 @@ class Db:
 
     def refund(self, tg_id: int, day: str | None = None) -> None:
         self._x("UPDATE usage SET n = MAX(0, n-1) WHERE tg_id=? AND day=?", (tg_id, day or today()))
+
+    # ---- квота по запускам работ: первое задание запуска списывает 1 из дневной квоты, остальные бесплатны ----
+    def begin_solve(self, tg_id: int, run_id: str | None, limit: int, max_per_run: int,
+                    now: int | None = None) -> tuple[str, int, bool]:
+        """-> (итог, использовано сегодня, новый ли запуск); итог: ok | quota | run_cap.
+        Без run_id (старые приложения) каждое задание — отдельный запуск."""
+        now = int(time.time()) if now is None else now
+        if run_id is None:
+            ok, used = self.try_consume(tg_id, limit)
+            return ("ok" if ok else "quota"), used, True
+        with self._lock, self._conn:
+            r = self._conn.execute("SELECT solves FROM runs WHERE tg_id=? AND run_id=?", (tg_id, run_id)).fetchone()
+            if r is not None:
+                if r["solves"] >= max_per_run:
+                    return "run_cap", self.used_today(tg_id), False
+                self._conn.execute("UPDATE runs SET solves=solves+1 WHERE tg_id=? AND run_id=?", (tg_id, run_id))
+                return "ok", self.used_today(tg_id), False
+            ok, used = self.try_consume(tg_id, limit)
+            if not ok:
+                return "quota", used, True
+            self._conn.execute("DELETE FROM runs WHERE created_at < ?", (now - 3 * 86400,))
+            self._conn.execute("INSERT INTO runs(tg_id, run_id, created_at, solves) VALUES(?,?,?,1)",
+                               (tg_id, run_id, now))
+            return "ok", used, True
+
+    def end_failed_solve(self, tg_id: int, run_id: str | None, new_run: bool) -> None:
+        """Задание не решено не по вине пользователя: возвращаем списанное в begin_solve."""
+        with self._lock, self._conn:
+            if new_run:
+                self.refund(tg_id)
+                if run_id is not None:
+                    self._conn.execute("DELETE FROM runs WHERE tg_id=? AND run_id=?", (tg_id, run_id))
+            elif run_id is not None:
+                self._conn.execute("UPDATE runs SET solves=MAX(0, solves-1) WHERE tg_id=? AND run_id=?",
+                                   (tg_id, run_id))
 
     def used_today(self, tg_id: int, day: str | None = None) -> int:
         r = self._q("SELECT n FROM usage WHERE tg_id=? AND day=?", (tg_id, day or today()))

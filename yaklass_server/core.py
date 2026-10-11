@@ -4,6 +4,8 @@ from __future__ import annotations
 import html
 import time
 
+from yaklass_bot.autorun import SENT, STATUS_NAMES
+
 from . import security
 from .db import Db, User
 from .hub import CommandError, Hub
@@ -73,7 +75,7 @@ class Core:
         used = self.db.used_today(user.tg_id)
         online = self.hub.online(user.tg_id)
         lines = [f"Приложение: {'🟢 онлайн' if online else '🔴 не запущено'}",
-                 f"Запросов сегодня: {used}/{limit}"]
+                 f"Запусков работ сегодня: {used}/{limit}"]
         st = self.hub.last_status.get(user.tg_id)
         if st:
             lines.append(f"Состояние: {esc(st.get('state', '?'))}"
@@ -91,6 +93,40 @@ class Core:
         except CommandError as e:
             return f"Некорректная команда: {esc(e)}"
         return "" if n else "Приложение не отвечает. Проверьте, что оно запущено."
+
+
+_SENT_NAMES = {STATUS_NAMES[k] for k in SENT}
+_THEORY_NAME = STATUS_NAMES["theory"]
+
+
+def fmt_duration(sec: int) -> str:
+    m, s = divmod(max(0, int(sec)), 60)
+    return f"{m} мин {s} с" if m else f"{s} с"
+
+
+def _count(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def render_finished(ev: dict) -> str:
+    """«Работа N сделана за X на Z%»: Z — доля заданий с отправленным ответом среди всех, кроме теории."""
+    summary = ev.get("summary") if isinstance(ev.get("summary"), dict) else {}
+    done = sum(_count(v) for k, v in summary.items() if k in _SENT_NAMES)
+    total = sum(_count(v) for k, v in summary.items() if k != _THEORY_NAME)
+    if isinstance(ev.get("tasks_total"), int):            # с заданиями, до которых проход не дошёл
+        total = max(total, ev["tasks_total"] - _count(summary.get(_THEORY_NAME)))
+    wid = str(ev.get("work_id") or "")
+    work = f"Работа {esc(wid)}" if wid else "Работа"
+    took = f" за {fmt_duration(ev['elapsed_s'])}" if isinstance(ev.get("elapsed_s"), int) else ""
+    pct = round(100 * done / total) if total else 0
+    if ev.get("completed"):
+        return f"✅ {work} сделана{took} на {pct}% ({done}/{total})" if total else f"✅ {work} сделана{took}"
+    note = str(ev.get("note") or "")
+    return (f"⚠️ {work} НЕ завершена{took}: отвечено {done}/{total} ({pct}%) — доделайте вручную"
+            + (f"\n{esc(note)}" if note else ""))
 
 
 def render_event(ev: dict) -> tuple[str, list[tuple[str, str]]]:
@@ -112,15 +148,9 @@ def render_event(ev: dict) -> tuple[str, list[tuple[str, str]]]:
                 buttons.append((f"▶ {str(w.get('title', wid))[:40]}", f"run:{wid}"))
         return "\n".join(lines), buttons
     if t == "progress":
-        done, total = ev.get("done"), ev.get("total")
-        bar = f"{done}/{total}" if done is not None and total else ""
-        return f"⏳ Выполнение {bar} {esc(ev.get('note', ''))}".strip(), []
+        return "", []          # по заданиям не пишем — только итог работы
     if t == "finished":
-        s = ev.get("summary") or {}
-        ok = ev.get("completed")
-        parts = ", ".join(f"{esc(k)}: {esc(v)}" for k, v in s.items())
-        return (("✅ Работа завершена" if ok else "⚠️ Работа НЕ завершена (нужно доделать вручную)")
-                + (f"\n{parts}" if parts else "")), []
+        return render_finished(ev), []
     if t == "error":
         return f"❌ {esc(ev.get('message', 'Ошибка в приложении'))}", []
     if t == "ack":
@@ -128,16 +158,31 @@ def render_event(ev: dict) -> tuple[str, list[tuple[str, str]]]:
     return "", []
 
 
-class ProgressThrottle:
-    """Не чаще одного сообщения о прогрессе раз в `every_s` секунд на пользователя (финальное — всегда)."""
+class RunTimer:
+    """Для итогового сообщения: время работы (от статуса «running» до «finished») и число заданий в ней
+    (из событий прогресса — задания, до которых проход не дошёл, в итоги приложения не попадают)."""
 
-    def __init__(self, every_s: float = 15.0, clock=time.monotonic):
-        self.every, self.clock = every_s, clock
-        self._last: dict[int, float] = {}
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self._runs: dict[int, dict] = {}       # tg_id -> {"work_id", "start", "tasks"}
 
-    def allow(self, tg_id: int, ev: dict) -> bool:
-        if ev.get("type") != "progress":
-            return True
+    def track(self, tg_id: int, ev: dict) -> dict:
+        """Запоминает начало и число заданий; к «finished» той же работы добавляет `elapsed_s` и `tasks_total`."""
+        t, wid = ev.get("type"), str(ev.get("work_id") or "")
+        if t == "status" and ev.get("state") == "running" and wid:
+            self._runs[tg_id] = {"work_id": wid, "start": self.clock(), "tasks": None}
+        elif t == "progress" and isinstance(ev.get("total"), int):
+            run = self._runs.get(tg_id)
+            if run and run["work_id"] == wid:
+                run["tasks"] = ev["total"]
+        elif t == "finished":
+            run = self._runs.pop(tg_id, None)
+            if run and run["work_id"] == wid:
+                extra = {"elapsed_s": int(self.clock() - run["start"])}
+                if run["tasks"]:
+                    extra["tasks_total"] = run["tasks"]
+                return {**ev, **extra}
+        return ev
         done, total = ev.get("done"), ev.get("total")
         if done is not None and total and done >= total:
             return True

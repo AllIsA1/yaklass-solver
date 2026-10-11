@@ -1,8 +1,9 @@
 [project]
 name = "yaklass-bot"
-version = "0.1.0"
+version = "0.1.1"
 description = "Помощник для проверочных работ ЯКласс: уведомления, парсинг, решение через LLM"
 requires-python = ">=3.11"
+authors = [{ name = "AllIsA1" }, { name = "Claude (Anthropic)", email = "noreply@anthropic.com" }]
 dependencies = [
     "beautifulsoup4",
     "lxml",

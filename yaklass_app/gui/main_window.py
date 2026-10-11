@@ -232,7 +232,7 @@ class MainWindow(QMainWindow):
     def _show_quota(self, info, err) -> None:
         if err or not info:
             return
-        self.refresh_link_state(f"Запросов сегодня: {info['used_today']} из {info['quota_per_day']}")
+        self.refresh_link_state(f"Запусков работ сегодня: {info['used_today']} из {info['quota_per_day']}")
 
     def closeEvent(self, e) -> None:
         self.agent.shutdown()

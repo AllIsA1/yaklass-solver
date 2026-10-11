@@ -1,6 +1,7 @@
 """Решатели для приложения: серверный (общий API) и локальный (свой API, вызывается прямо с этого ПК)."""
 from __future__ import annotations
 
+import secrets
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -77,12 +78,13 @@ class RemoteSolver:
     def __init__(self, server_url: str, token: str, sleep: Callable[[float], None] = time.sleep):
         self.url, self.token, self._sleep = server_url, token, sleep
         self.remaining: int | None = None
+        self.run_id = secrets.token_hex(16)      # решатель создаётся на каждый запуск: квота сервера — по запускам
 
     def solve(self, task: Task, log: Log = lambda m: None) -> Answer:
         last = ""
         for attempt in range(3):
             try:
-                r = requests.post(api_url(self.url, "/v1/solve"), json=serialize_task(task),
+                r = requests.post(api_url(self.url, "/v1/solve"), json={**serialize_task(task), "run_id": self.run_id},
                                   headers={"Authorization": f"Bearer {self.token}"}, timeout=TIMEOUT)
             except requests.RequestException as e:
                 last = f"сервер недоступен ({e.__class__.__name__})"

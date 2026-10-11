@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from .core import DISCLAIMER, HELP, Core, ProgressThrottle, esc, render_event
+from .core import DISCLAIMER, HELP, Core, RunTimer, esc, render_event
 
 log = logging.getLogger("yaklass.bot")
 
@@ -125,11 +125,10 @@ def build_bot(core: Core) -> tuple[Bot, Dispatcher]:
     bot = Bot(core.s.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_router(build_router(core))
-    throttle = ProgressThrottle()
+    timer = RunTimer()
 
     async def notify(tg_id: int, ev: dict) -> None:
-        if not throttle.allow(tg_id, ev):
-            return
+        ev = timer.track(tg_id, ev)
         text, buttons = render_event(ev)
         if not text:
             return

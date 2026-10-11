@@ -8,7 +8,7 @@
 | `GET /healthz` | `{ok, agents_online}` |
 | `POST /v1/link` `{code, device_name}` | обмен кода из бота на токен → `{token, username}`. Код одноразовый, 10 мин. 10 попыток/мин с IP |
 | `GET /v1/me` | `{tg_id, username, quota_per_day, used_today, min_task_interval_s, agent_online}` |
-| `POST /v1/solve` `{task}` | решение задания → `{answers, confidence, evidence, remaining_today}` |
+| `POST /v1/solve` `{task, run_id?}` | решение задания → `{answers, confidence, evidence, remaining_today}`; `run_id` — один на запуск работы: квота списывается за первое задание запуска, без него — за каждое |
 
 Ошибки: `401` нет/неверный токен, `403` пользователь заблокирован, `413` запрос > `MAX_BODY_BYTES`,
 `422` неверная структура, `429` rate limit (`Retry-After`) или суточная квота, `502` модель не дала ответа

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from yaklass_server.core import Core, ProgressThrottle, render_event
+from yaklass_server.core import Core, RunTimer, render_event
 from yaklass_server.db import Db
 from yaklass_server.hub import Hub
 from yaklass_server.settings import Settings
@@ -51,7 +51,7 @@ def test_status_text():
     c = core()
     user, _ = c.register(5, "x")
     t = c.status_text(user)
-    assert "не запущено" in t and "0/300" in t
+    assert "не запущено" in t and "Запусков работ сегодня: 0/20" in t
 
 
 def test_render_escapes_html_from_agent():
@@ -65,15 +65,28 @@ def test_render_escapes_html_from_agent():
     assert "НЕ завершена" in render_event({"type": "finished", "completed": False})[0]
 
 
-def test_progress_throttle():
-    now = [0.0]
-    t = ProgressThrottle(15, clock=lambda: now[0])
-    p = lambda d: {"type": "progress", "done": d, "total": 9}  # noqa: E731
-    assert t.allow(1, p(1)) and not t.allow(1, p(2))
-    assert t.allow(1, p(9))                                                       # финальный — всегда
-    assert t.allow(1, {"type": "error"})
-    now[0] = 20
-    assert t.allow(1, p(3)) and t.allow(2, p(1))
+def test_no_progress_messages_only_final_summary():
+    assert render_event({"type": "progress", "done": 3, "total": 21, "note": "задание 3: theory"}) == ("", [])
+    now = [100.0]
+    timer = RunTimer(clock=lambda: now[0])
+    timer.track(1, {"type": "status", "state": "running", "work_id": "777"})
+    timer.track(1, {"type": "progress", "work_id": "777", "done": 1, "total": 12})
+    now[0] = 100 + 3 * 60 + 5
+    ev = timer.track(1, {"type": "finished", "work_id": "777", "completed": True,
+                         "summary": {"новых ответов": 8, "без изменений": 1, "теория": 2, "ошибки": 1}})
+    assert render_event(ev)[0] == "✅ Работа 777 сделана за 3 мин 5 с на 90% (9/10)"
+
+
+def test_unfinished_counts_tasks_not_reached():
+    timer = RunTimer(clock=lambda: 0.0)
+    timer.track(1, {"type": "status", "state": "running", "work_id": "5"})
+    timer.track(1, {"type": "progress", "work_id": "5", "done": 7, "total": 21})
+    ev = timer.track(1, {"type": "finished", "work_id": "5", "completed": False, "note": "остановлено: <лимит>",
+                         "summary": {"новых ответов": 7, "ошибки": 1}})
+    text = render_event(ev)[0]
+    assert text.startswith("⚠️ Работа 5 НЕ завершена за 0 с: отвечено 7/21 (33%)") and "&lt;лимит&gt;" in text
+    other = timer.track(2, {"type": "finished", "work_id": "9", "completed": True, "summary": {}})
+    assert render_event(other)[0] == "✅ Работа 9 сделана"                     # начала не видели — без времени
 
 
 # ---------- /link: адрес сервера, затем код, затем пояснения ----------

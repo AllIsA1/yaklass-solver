@@ -105,6 +105,40 @@ def test_model_failure_is_not_charged(env):
     assert me["used_today"] == 0
 
 
+def test_quota_counts_runs_not_tasks(env):
+    """Все задания одного запуска (один run_id) — одна единица квоты."""
+    _, token = make_agent(env)
+    run = lambda rid: {**TASK, "run_id": rid}  # noqa: E731
+    for _ in range(10):
+        assert env.client.post("/v1/solve", json=run("run-aaaaaaaa"), headers=auth(token)).status_code == 200
+    assert env.client.get("/v1/me", headers=auth(token)).json()["used_today"] == 1
+    for rid in ("run-bbbbbbbb", "run-cccccccc"):
+        assert env.client.post("/v1/solve", json=run(rid), headers=auth(token)).status_code == 200
+    r = env.client.post("/v1/solve", json=run("run-dddddddd"), headers=auth(token))
+    assert r.status_code == 429 and "запусков" in r.json()["detail"]           # квота 3 запуска
+    assert env.client.post("/v1/solve", json=run("run-aaaaaaaa"), headers=auth(token)).status_code == 200
+
+
+def test_run_cap_and_bad_run_id(env):
+    env.s.max_solves_per_run = 2
+    _, token = make_agent(env)
+    body = {**TASK, "run_id": "run-aaaaaaaa"}
+    codes = [env.client.post("/v1/solve", json=body, headers=auth(token)).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+    assert env.client.post("/v1/solve", json={**TASK, "run_id": "bad id!"}, headers=auth(token)).status_code == 422
+
+
+def test_failed_first_task_of_run_is_not_charged(env):
+    _, token = make_agent(env)
+    body = {**TASK, "run_id": "run-aaaaaaaa"}
+    env.model.fail = True
+    assert env.client.post("/v1/solve", json=body, headers=auth(token)).status_code == 502
+    env.model.fail = False
+    assert env.client.get("/v1/me", headers=auth(token)).json()["used_today"] == 0
+    assert env.client.post("/v1/solve", json=body, headers=auth(token)).status_code == 200
+    assert env.client.get("/v1/me", headers=auth(token)).json()["used_today"] == 1
+
+
 def test_rate_limit_per_minute(env):
     env.s.rate_per_min = 2
     from yaklass_server.api import create_app
@@ -270,7 +304,7 @@ def test_shipped_env_example_loads_the_way_systemd_reads_it(monkeypatch):
             k, _, v = line.partition("=")
             monkeypatch.setenv(k.strip(), v)
     s = Settings.from_env("/nonexistent")
-    assert s.daily_quota == 300 and s.port == 8080 and s.registration == "open" and s.search_mode == "always"
+    assert s.daily_quota == 20 and s.max_solves_per_run == 150 and s.port == 8080 and s.registration == "open" and s.search_mode == "always"
     assert not any(" #" in l for l in text.splitlines() if l and not l.lstrip().startswith("#"))   # нет комментариев в конце строк
 
 
