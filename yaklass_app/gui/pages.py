@@ -48,6 +48,17 @@ class Page(QWidget):
         outer.addLayout(self.content, 1)
 
 
+def release_notes_text(notes: str, max_lines: int = 6) -> str:
+    """Описание релиза без разметки Markdown и служебных строк GitHub («Full Changelog» и т.п.)."""
+    out = []
+    for ln in notes.splitlines():
+        t = ln.strip().replace("**", "").replace("`", "").lstrip("#").strip()
+        if not t or t.lower().startswith(("full changelog", "what's changed")):
+            continue
+        out.append(t)
+    return "\n".join(out[:max_lines])
+
+
 # ============================================================ Главная
 class HomePage(Page):
     link_requested = Signal(str)
@@ -62,6 +73,12 @@ class HomePage(Page):
 
     def __init__(self):
         super().__init__("Главная", "Состояние приложения и выполнение работы")
+        # карточки в прокручиваемой области: в невысоком окне они не сжимаются (строки не обрезаются)
+        host = QWidget()
+        self.cards = QVBoxLayout(host)
+        self.cards.setContentsMargins(0, 0, 8, 0)
+        self.cards.setSpacing(14)
+        self.content.addWidget(scrolled(host), 1)
         # --- Telegram
         self.tg = Card("Telegram", "Приложение работает на вашем компьютере. Бот только отдаёт команды и присылает уведомления.")
         self.tg_status = Pill("Не привязано", "warn")
@@ -132,8 +149,8 @@ class HomePage(Page):
         self.upd.body.addLayout(row(self.btn_upd_install, self.btn_upd_open, self.btn_upd_hide, None))
         self.upd.hide()
         for c in (self.upd, self.tg, self.yk, self.run):
-            self.content.addWidget(c)
-        self.content.addStretch(1)
+            self.cards.addWidget(c)
+        self.cards.addStretch(1)
         self.set_linked(False)
         self.set_run_state("idle")
 
@@ -151,7 +168,7 @@ class HomePage(Page):
         self.upd_text.setText(f"Версия {version} (у вас {current}). " + (
             "Приложение скачает её, проверит контрольную сумму и перезапустится." if can_install else
             "Скачайте сборку на странице релиза и замените файл приложения."))
-        short = "\n".join([ln for ln in notes.splitlines() if ln.strip()][:6])
+        short = release_notes_text(notes)
         self.upd_notes.setText(short)
         self.upd_notes.setVisible(bool(short))
         self.upd.show()
@@ -179,6 +196,7 @@ class HomePage(Page):
             self.tg_status.set(("Подключено · " if connected else "Нет связи с сервером · ") + who,
                                "ok" if connected else "bad")
             self.tg_info.setText(note)
+        self.tg_info.setVisible(bool(note))
 
     def set_login_mode(self, cookies: bool, browser: str = ""):
         """Профиль приложения: кнопка открывает окно входа. Куки браузера: вход берётся из браузера, кнопка проверяет."""
@@ -203,6 +221,7 @@ class HomePage(Page):
         else:
             self.yk_status.set("Нужно войти", "bad")
         self.yk_info.setText(message or getattr(self, "yk_hint", ""))
+        self.yk_info.setVisible(bool(self.yk_info.text()))
 
     def set_run_state(self, state: str, work_id: str | None = None):
         tone = {"idle": "", "running": "ok", "paused": "warn"}[state]

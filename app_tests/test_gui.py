@@ -111,6 +111,25 @@ def test_start_requires_confirmation(ui, monkeypatch):
     assert not ui.backend.runs
 
 
+def test_home_cards_are_not_squeezed_in_a_short_window(qapp):
+    """Раньше при невысоком окне карточки сжимались, и строки/кнопки обрезались."""
+    from yaklass_app.gui.pages import HomePage, release_notes_text
+    from yaklass_app.gui.theme import stylesheet
+    qapp.setStyleSheet(stylesheet("dark"))
+    p = HomePage()
+    p.show_update("0.1.2", "0.1.1", "## What's Changed\n* **Режимы**\n\n**Full Changelog**: https://x", "u", True)
+    p.set_linked(True, "evan", True)
+    p.resize(760, 380)
+    p.show()
+    qapp.processEvents()
+    for card in (p.upd, p.tg, p.yk, p.run):
+        lay = card.layout()
+        need = lay.heightForWidth(card.width()) if lay.hasHeightForWidth() else lay.sizeHint().height()
+        assert card.height() >= need, (card.height(), need)       # хватает места под перенос строк
+    assert "Full Changelog" not in p.upd_notes.text() and "**" not in p.upd_notes.text()
+    assert release_notes_text("**A**\n\n`b`") == "A\nb"
+
+
 def test_events_update_widgets(ui):
     def ev(n, **p):
         ui.bridge.event.emit(n, p)
