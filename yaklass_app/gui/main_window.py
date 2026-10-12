@@ -16,6 +16,23 @@ from .pages import HomePage, LogPage, SettingsPage, WorksPage
 from .theme import stylesheet
 from .widgets import BrandMark, Bridge, Pill, refresh_icons, set_icon, set_theme_name
 
+def app_mark(size: int) -> QWidget:
+    """Иконка приложения в боковой панели (если файла нет — нарисованная буква)."""
+    from pathlib import Path
+    from PySide6.QtGui import QPixmap
+    f = Path(__file__).resolve().parent.parent / "assets" / "icon-small.png"      # упрощённая: без мелких деталей
+    pm = QPixmap(str(f)) if f.exists() else QPixmap()
+    if pm.isNull():
+        return BrandMark("Я", size)
+    dpr = 2.0
+    pm = pm.scaled(int(size * dpr), int(size * dpr), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    pm.setDevicePixelRatio(dpr)
+    lb = QLabel()
+    lb.setFixedSize(size, size)
+    lb.setPixmap(pm)
+    return lb
+
+
 NAV = [("Главная", "home"), ("Работы", "works"), ("Настройки", "settings"), ("Журнал", "log")]
 
 
@@ -45,7 +62,7 @@ class MainWindow(QMainWindow):
         head = QHBoxLayout()
         head.setContentsMargins(6, 0, 0, 0)
         head.setSpacing(10)
-        head.addWidget(BrandMark("Y", 28))
+        head.addWidget(app_mark(30))
         head.addWidget(brand)
         head.addStretch(1)
         sl.addLayout(head)
