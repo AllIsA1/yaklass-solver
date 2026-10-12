@@ -14,9 +14,9 @@ from ..backend import install_chromium
 from ..settings import Store
 from .pages import HomePage, LogPage, SettingsPage, WorksPage
 from .theme import stylesheet
-from .widgets import Bridge, Pill
+from .widgets import BrandMark, Bridge, Pill, refresh_icons, set_icon, set_theme_name
 
-NAV = [("Главная", "⌂"), ("Работы", "☰"), ("Настройки", "⚙"), ("Журнал", "▤")]
+NAV = [("Главная", "home"), ("Работы", "works"), ("Настройки", "settings"), ("Журнал", "log")]
 
 
 class MainWindow(QMainWindow):
@@ -24,8 +24,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.agent, self.store, self.bridge = agent, store, bridge
         self.setWindowTitle("Yaklass Solver")
-        self.resize(1040, 700)
-        self.setMinimumSize(880, 580)
+        self.resize(1080, 720)
+        self.setMinimumSize(900, 600)
         root = QWidget()
         root.setObjectName("root")
         self.setCentralWidget(root)
@@ -36,39 +36,81 @@ class MainWindow(QMainWindow):
         # --- боковая панель
         side = QFrame()
         side.setObjectName("sidebar")
-        side.setFixedWidth(230)
+        side.setFixedWidth(232)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(16, 22, 16, 18)
-        sl.setSpacing(6)
+        sl.setContentsMargins(12, 16, 12, 0)
+        sl.setSpacing(2)
         brand = QLabel("Yaklass Solver")
         brand.setObjectName("brand")
-        sub = QLabel("помощник для работ")
-        sub.setObjectName("brandSub")
-        sl.addWidget(brand)
-        sl.addWidget(sub)
-        sl.addSpacing(18)
+        head = QHBoxLayout()
+        head.setContentsMargins(6, 0, 0, 0)
+        head.setSpacing(10)
+        head.addWidget(BrandMark("Y", 28))
+        head.addWidget(brand)
+        head.addStretch(1)
+        sl.addLayout(head)
+        sl.addSpacing(22)
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
         self.stack = QStackedWidget()
         self.home, self.works, self.settings, self.log = HomePage(), WorksPage(), SettingsPage(), LogPage()
-        for i, ((title, icon), page) in enumerate(zip(NAV, (self.home, self.works, self.settings, self.log))):
-            b = QPushButton(f"{icon}   {title}")
+        self.pages = (self.home, self.works, self.settings, self.log)
+        for i, ((title, icon), page) in enumerate(zip(NAV, self.pages)):
+            b = QPushButton(f"  {title}")
             b.setObjectName("nav")
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
+            set_icon(b, icon, "muted", 18)
             self.nav.addButton(b, i)
             sl.addWidget(b)
             self.stack.addWidget(page)
-        self.nav.idClicked.connect(self.stack.setCurrentIndex)
+        self.nav.idClicked.connect(self._go)
         self.nav.button(0).setChecked(True)
         sl.addStretch(1)
+        # блок состояния внизу (как карточка аккаунта)
+        acc = QFrame()
+        acc.setObjectName("account")
+        al = QVBoxLayout(acc)
+        al.setContentsMargins(6, 12, 6, 14)
+        al.setSpacing(6)
         self.conn = Pill("Нет связи", "bad")
-        sl.addWidget(self.conn, 0, Qt.AlignLeft)
+        al.addWidget(self.conn, 0, Qt.AlignLeft)
         ver = QLabel(f"Версия {__version__}")
         ver.setObjectName("version")
-        sl.addWidget(ver)
+        ver.setContentsMargins(10, 0, 0, 0)
+        al.addWidget(ver)
+        sl.addWidget(acc)
         lay.addWidget(side)
-        lay.addWidget(self.stack, 1)
+
+        # --- основная область: верхняя полоса + страницы
+        main = QWidget()
+        main.setObjectName("main")
+        ml = QVBoxLayout(main)
+        ml.setContentsMargins(0, 0, 0, 0)
+        ml.setSpacing(0)
+        top = QFrame()
+        top.setObjectName("topbar")
+        top.setFixedHeight(48)
+        tl = QHBoxLayout(top)
+        tl.setContentsMargins(20, 0, 12, 0)
+        tl.setSpacing(8)
+        self.top_title = QLabel()
+        self.top_title.setObjectName("topTitle")
+        self.top_sub = QLabel()
+        self.top_sub.setObjectName("topSub")
+        self.btn_theme = QPushButton()
+        self.btn_theme.setObjectName("iconBtn")
+        self.btn_theme.setCursor(Qt.PointingHandCursor)
+        self.btn_theme.setToolTip("Сменить тему")
+        self.btn_theme.clicked.connect(self.toggle_theme)
+        tl.addWidget(self.top_title)
+        tl.addWidget(self.top_sub)
+        tl.addStretch(1)
+        tl.addWidget(self.btn_theme)
+        ml.addWidget(top)
+        ml.addWidget(self.stack, 1)
+        lay.addWidget(main, 1)
+        self._go(0)
 
         # --- сигналы
         bridge.event.connect(self.on_event)
@@ -100,9 +142,32 @@ class MainWindow(QMainWindow):
             self.bridge.done.emit(cb, res, err)
         threading.Thread(target=work, daemon=True).start()
 
+    def _go(self, i: int) -> None:
+        self.stack.setCurrentIndex(i)
+        page = self.pages[i]
+        self.top_title.setText(page.title_text)
+        self.top_sub.setText("")                 # пояснение — под заголовком страницы, здесь не дублируем
+
+    def apply_theme(self, name: str) -> None:
+        set_theme_name(name)
+        QApplication.instance().setStyleSheet(stylesheet(name))
+        set_icon(self.btn_theme, "sun" if name == "dark" else "moon", "muted", 18)
+        refresh_icons(self)
+        for w in QApplication.topLevelWidgets():          # открытые диалоги тоже
+            if w is not self:
+                refresh_icons(w)
+
+    def toggle_theme(self) -> None:
+        s = self.store.load()
+        s.theme = "light" if s.theme == "dark" else "dark"
+        self.store.save(s)
+        self.settings._set_combo(self.settings.theme, s.theme)
+        self.settings._base.theme = s.theme
+        self.apply_theme(s.theme)
+
     def load_settings(self) -> None:
         s = self.store.load()
-        QApplication.instance().setStyleSheet(stylesheet(s.theme))
+        self.apply_theme(s.theme)
         self.settings.load(s, bool(self.store.own_api_key))
         self.home.set_login_mode(s.browser_mode == "cookies", s.cookie_browser)
         self.refresh_link_state()
@@ -179,7 +244,7 @@ class MainWindow(QMainWindow):
     def on_settings_saved(self, s) -> None:
         old = self.store.load()
         self.store.save(s)
-        QApplication.instance().setStyleSheet(stylesheet(s.theme))
+        self.apply_theme(s.theme)
         # соединение с сервером зависит только от адреса сервера; иначе лишний разрыв (и повторные
         # сообщения от бота) при каждом сохранении настроек
         if old.server_url != s.server_url:
@@ -208,7 +273,7 @@ class MainWindow(QMainWindow):
         elif name == "finished":
             ok = p.get("completed")
             parts = ", ".join(f"{k}: {v}" for k, v in (p.get("summary") or {}).items())
-            self.home.set_result(("✅ Работа завершена. " if ok else "⚠ Работа не завершена. ") + (p.get("note") or "") +
+            self.home.set_result(("Работа завершена. " if ok else "Работа не завершена. ") + (p.get("note") or "") +
                                  (f"\n{parts}" if parts else ""))
             self.log.add(f"Итог: {parts} — {p.get('note', '')}")
         elif name == "works":

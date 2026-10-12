@@ -4,28 +4,16 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton, QScrollArea,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+                               QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from yaklass_bot.stealth import GRADE_BANDS, RunStyle
 
 from ..settings import AppSettings
-from .widgets import Card, NumField, Pill, form_row, label, row
+from .widgets import (Card, NumField, OptionCard, Pill, SettingRow, Toggle, divider, form_row, icon_label, label, row,
+                      section, set_icon)
 
-
-def page_header(title: str, sub: str = "") -> QVBoxLayout:
-    lay = QVBoxLayout()
-    lay.setSpacing(2)
-    t = QLabel(title)
-    t.setObjectName("pageTitle")
-    lay.addWidget(t)
-    if sub:
-        s = QLabel(sub)
-        s.setObjectName("pageSub")
-        s.setWordWrap(True)
-        lay.addWidget(s)
-    return lay
+COLUMN_WIDTH = 780                 # ширина колонки контента (как у чата: текст не растягивается на весь экран)
 
 
 def scrolled(inner: QWidget) -> QScrollArea:
@@ -36,16 +24,76 @@ def scrolled(inner: QWidget) -> QScrollArea:
     return sa
 
 
+def centered(inner: QWidget, top: int = 0, bottom: int = 0) -> QWidget:
+    """Колонка фиксированной максимальной ширины по центру."""
+    inner.setMaximumWidth(COLUMN_WIDTH)
+    wrap = QWidget()
+    wrap.setObjectName("column")
+    h = QHBoxLayout(wrap)
+    h.setContentsMargins(36, top, 36, bottom)
+    h.addStretch(1)
+    h.addWidget(inner, 100)
+    h.addStretch(1)
+    return wrap
+
+
 class Page(QWidget):
-    def __init__(self, title: str, sub: str = ""):
+    """Страница: заголовок с засечками и колонка контента по центру. scroll — прокручивается вся колонка."""
+
+    def __init__(self, title: str, sub: str = "", scroll: bool = True, heading: str | None = None):
         super().__init__()
+        self.setObjectName("page")
+        self.title_text, self.sub_text = title, sub
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(32, 28, 32, 20)
-        outer.setSpacing(18)
-        outer.addLayout(page_header(title, sub))
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        column = QWidget()
+        col = QVBoxLayout(column)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(22)
+        head = QVBoxLayout()
+        head.setSpacing(6)
+        self.heading = QLabel(heading or title)
+        self.heading.setObjectName("pageTitle")
+        head.addWidget(self.heading)
+        if sub:
+            s = QLabel(sub)
+            s.setObjectName("pageSub")
+            s.setWordWrap(True)
+            head.addWidget(s)
+        col.addLayout(head)
         self.content = QVBoxLayout()
         self.content.setSpacing(14)
-        outer.addLayout(self.content, 1)
+        col.addLayout(self.content, 1)
+        body = centered(column, top=34, bottom=28)
+        if scroll:
+            outer.addWidget(scrolled(body), 1)
+        else:
+            outer.addWidget(body, 1)
+        self._outer = outer
+
+    def add_footer(self, layout) -> None:
+        """Нижняя полоса, которая не прокручивается (например, «Сохранить»)."""
+        inner = QWidget()
+        inner.setLayout(layout)
+        bar = QFrame()
+        bar.setObjectName("footer")
+        v = QVBoxLayout(bar)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(divider())
+        v.addWidget(centered(inner, top=12, bottom=14))
+        self._outer.addWidget(bar)
+
+
+def greeting(hour: int | None = None) -> str:
+    h = time.localtime().tm_hour if hour is None else hour
+    if 5 <= h < 12:
+        return "Доброе утро"
+    if 12 <= h < 17:
+        return "Добрый день"
+    if 17 <= h < 23:
+        return "Добрый вечер"
+    return "Доброй ночи"
 
 
 def release_notes_text(notes: str, max_lines: int = 6) -> str:
@@ -57,6 +105,16 @@ def release_notes_text(notes: str, max_lines: int = 6) -> str:
             continue
         out.append(t)
     return "\n".join(out[:max_lines])
+
+
+def _btn(text: str, kind: str = "", icon: str = "", role: str = "") -> QPushButton:
+    b = QPushButton(text)
+    if kind:
+        b.setObjectName(kind)
+    b.setCursor(Qt.PointingHandCursor)
+    if icon:
+        set_icon(b, icon, role or ("accent_t" if kind == "primary" else "muted"), 16)
+    return b
 
 
 # ============================================================ Главная
@@ -72,85 +130,97 @@ class HomePage(Page):
     install_update_requested = Signal()
 
     def __init__(self):
-        super().__init__("Главная", "Состояние приложения и выполнение работы")
-        # карточки в прокручиваемой области: в невысоком окне они не сжимаются (строки не обрезаются)
-        host = QWidget()
-        self.cards = QVBoxLayout(host)
-        self.cards.setContentsMargins(0, 0, 8, 0)
-        self.cards.setSpacing(14)
-        self.content.addWidget(scrolled(host), 1)
-        # --- Telegram
-        self.tg = Card("Telegram", "Приложение работает на вашем компьютере. Бот только отдаёт команды и присылает уведомления.")
-        self.tg_status = Pill("Не привязано", "warn")
-        self.tg_info = label("", "hint")
-        self.steps = label("1. Откройте бота в Telegram и отправьте <b>/link</b>.<br>2. Введите полученный код ниже.", "muted")
-        self.code = QLineEdit()
-        self.code.setPlaceholderText("XXXX-XXXX")
-        self.code.setMaxLength(12)
-        self.code.returnPressed.connect(self._link)
-        self.btn_link = QPushButton("Привязать")
-        self.btn_link.setObjectName("primary")
-        self.btn_link.clicked.connect(self._link)
-        self.btn_unlink = QPushButton("Отвязать")
-        self.btn_unlink.setObjectName("danger")
-        self.btn_unlink.clicked.connect(self.unlink_requested.emit)
-        self.link_row = QWidget()
-        lr = row(self.code, self.btn_link)
-        self.link_row.setLayout(lr)
-        self.tg.body.addLayout(row(self.tg_status, None))
-        self.tg.body.addWidget(self.tg_info)
-        self.tg.body.addWidget(self.steps)
-        self.tg.body.addWidget(self.link_row)
-        self.tg.body.addLayout(row(self.btn_unlink, None))
-        # --- ЯКласс
-        self.yk = Card("ЯКласс", "Вход выполняется в окне браузера один раз; пароль приложению не передаётся.")
-        self.yk_status = Pill("Не проверено", "")
-        self.yk_info = label("", "hint")
-        self.btn_login = QPushButton("Войти в ЯКласс")
-        self.btn_login.clicked.connect(self.login_requested.emit)
-        self.yk.body.addLayout(row(self.yk_status, None, self.btn_login))
-        self.yk.body.addWidget(self.yk_info)
-        # --- Выполнение
-        self.run = Card("Выполнение")
-        self.run_state = Pill("Простаивает", "")
-        self.run_text = label("Выберите работу на вкладке «Работы» или запустите её командой из Telegram.", "muted")
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 1)
-        self.bar.setValue(0)
-        self.bar.setTextVisible(True)
-        self.btn_pause = QPushButton("Пауза")
-        self.btn_resume = QPushButton("Продолжить")
-        self.btn_stop = QPushButton("Стоп")
-        self.btn_stop.setObjectName("danger")
-        self.btn_pause.clicked.connect(self.pause_requested.emit)
-        self.btn_resume.clicked.connect(self.resume_requested.emit)
-        self.btn_stop.clicked.connect(self.stop_requested.emit)
-        self.run.body.addLayout(row(self.run_state, None))
-        self.run.body.addWidget(self.run_text)
-        self.run.body.addWidget(self.bar)
-        self.run.body.addLayout(row(self.btn_pause, self.btn_resume, self.btn_stop, None))
+        super().__init__("Главная", "Состояние приложения и выполнение работы", heading=greeting())
+        self.cards = self.content
         # --- новая версия (плашка скрыта, пока обновлений нет)
-        self.upd = Card("Доступна новая версия")
+        self.upd = Card("Доступна новая версия", icon="download", name="banner")
         self.upd_text = label("", "muted")
         self.upd_notes = label("", "hint")
-        self.btn_upd_install = QPushButton("Обновить сейчас")
-        self.btn_upd_install.setObjectName("primary")
+        self.btn_upd_install = _btn("Обновить сейчас", "primary")
         self.btn_upd_install.clicked.connect(self.install_update_requested.emit)
         self.upd_progress = QProgressBar()
         self.upd_progress.hide()
-        self.btn_upd_open = QPushButton("Страница релиза")
-        self.btn_upd_hide = QPushButton("Скрыть")
+        self.btn_upd_open = _btn("Что нового")
+        self.btn_upd_hide = _btn("Скрыть", "ghost")
         self._upd_url = ""
         self.btn_upd_open.clicked.connect(lambda: self.open_url_requested.emit(self._upd_url))
         self.btn_upd_hide.clicked.connect(self.dismiss_update_requested.emit)
         self.upd.body.addWidget(self.upd_text)
         self.upd.body.addWidget(self.upd_notes)
         self.upd.body.addWidget(self.upd_progress)
-        self.upd.body.addLayout(row(self.btn_upd_install, self.btn_upd_open, self.btn_upd_hide, None))
+        self.upd.body.addLayout(row(self.btn_upd_install, self.btn_upd_open, None, self.btn_upd_hide))
         self.upd.hide()
-        for c in (self.upd, self.tg, self.yk, self.run):
-            self.cards.addWidget(c)
-        self.cards.addStretch(1)
+
+        # --- Telegram
+        self.tg = Card("Telegram", icon="telegram")
+        self.tg_status = Pill("Не привязано", "warn")
+        self.tg.head.addWidget(self.tg_status)
+        self.tg_info = label("", "hint")
+        self.steps = label("Откройте бота и отправьте <b>/link</b> — он пришлёт код. Введите его ниже.", "muted")
+        self.code = QLineEdit()
+        self.code.setObjectName("codeInput")
+        self.code.setPlaceholderText("XXXX-XXXX")
+        self.code.setMaxLength(12)
+        self.code.returnPressed.connect(self._link)
+        self.btn_link = _btn("Привязать", "primary")
+        self.btn_link.clicked.connect(self._link)
+        self.btn_unlink = _btn("Отвязать", "danger")
+        self.btn_unlink.clicked.connect(self.unlink_requested.emit)
+        self.link_row = QWidget()
+        self.link_row.setLayout(row(self.code, self.btn_link, fill=self.code))
+        self.tg_hint = label("Приложение работает на вашем компьютере; бот только отдаёт команды и присылает "
+                             "уведомления.", "hint")
+        self.tg.body.addWidget(self.steps)
+        self.tg.body.addWidget(self.link_row)
+        self.tg.body.addWidget(self.tg_info)
+        self.tg.body.addWidget(self.tg_hint)
+        self.tg.body.addStretch(1)
+        self.tg.body.addLayout(row(self.btn_unlink, None))
+
+        # --- ЯКласс
+        self.yk = Card("ЯКласс", icon="school")
+        self.yk_status = Pill("Не проверено", "")
+        self.yk.head.addWidget(self.yk_status)
+        self.yk_info = label("", "hint")
+        self.btn_login = _btn("Войти в ЯКласс")
+        self.btn_login.clicked.connect(self.login_requested.emit)
+        self.yk.body.addWidget(label("Вход выполняется в окне браузера один раз; пароль приложению не передаётся.",
+                                     "muted"))
+        self.yk.body.addWidget(self.yk_info)
+        self.yk.body.addStretch(1)
+        self.yk.body.addLayout(row(self.btn_login, None))
+
+        pair = QGridLayout()
+        pair.setHorizontalSpacing(14)
+        pair.addWidget(self.tg, 0, 0)
+        pair.addWidget(self.yk, 0, 1)
+        pair.setColumnStretch(0, 1)
+        pair.setColumnStretch(1, 1)
+
+        # --- Выполнение
+        self.run = Card("Выполнение", icon="spark")
+        self.run_state = Pill("Простаивает", "")
+        self.run.head.addWidget(self.run_state)
+        self.run_text = label("Выберите работу на вкладке «Работы» или запустите её командой из Telegram.", "muted")
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1)
+        self.bar.setValue(0)
+        self.bar.setTextVisible(False)
+        self.progress_lbl = label("", "hint", wrap=False)
+        self.btn_pause = _btn("Пауза", icon="pause")
+        self.btn_resume = _btn("Продолжить", "primary", icon="play")
+        self.btn_stop = _btn("Стоп", "danger", icon="stop", role="danger")
+        self.btn_pause.clicked.connect(self.pause_requested.emit)
+        self.btn_resume.clicked.connect(self.resume_requested.emit)
+        self.btn_stop.clicked.connect(self.stop_requested.emit)
+        self.run.body.addWidget(self.run_text)
+        self.run.body.addLayout(row(self.bar, self.progress_lbl, fill=self.bar, spacing=12))
+        self.run.body.addLayout(row(self.btn_pause, self.btn_resume, self.btn_stop, None))
+
+        self.content.addWidget(self.upd)
+        self.content.addLayout(pair)
+        self.content.addWidget(self.run)
+        self.content.addStretch(1)
         self.set_linked(False)
         self.set_run_state("idle")
 
@@ -182,6 +252,7 @@ class HomePage(Page):
         self.upd_progress.setValue(done)
         self.upd_progress.setFormat(f"{done // 1024 // 1024} из {max(total, 1) // 1024 // 1024} МБ")
         self.btn_upd_install.setEnabled(False)
+        self.btn_upd_install.setText(f"Скачиваю… {done // 1024 // 1024} из {max(total, 1) // 1024 // 1024} МБ")
 
     def set_linked(self, linked: bool, username: str = "", connected: bool = False, note: str = ""):
         self.btn_link.setEnabled(True)
@@ -190,22 +261,21 @@ class HomePage(Page):
         self.btn_unlink.setVisible(linked)
         if not linked:
             self.tg_status.set("Не привязано", "warn")
-            self.tg_info.setText(note)
         else:
             who = f"@{username}" if username else "аккаунт Telegram"
-            self.tg_status.set(("Подключено · " if connected else "Нет связи с сервером · ") + who,
+            self.tg_status.set(("Подключено · " if connected else "Нет связи · ") + who,
                                "ok" if connected else "bad")
-            self.tg_info.setText(note)
+        self.tg_info.setText(note)
         self.tg_info.setVisible(bool(note))
 
     def set_login_mode(self, cookies: bool, browser: str = ""):
         """Профиль приложения: кнопка открывает окно входа. Куки браузера: вход берётся из браузера, кнопка проверяет."""
         self.btn_login.setText("Проверить вход" if cookies else "Войти в ЯКласс")
-        self.yk.setToolTip("")
         self.yk_hint = (f"Вход берётся из браузера {browser}: войдите в ЯКласс там, затем нажмите «Проверить вход»."
                         if cookies else "")
         if not self.yk_info.text() or self.yk_info.text() == getattr(self, "_last_hint", ""):
             self.yk_info.setText(self.yk_hint)
+        self.yk_info.setVisible(bool(self.yk_info.text()))
         self._last_hint = self.yk_hint
 
     def set_login(self, ok: bool | None, message: str = "", checking: bool = False):
@@ -225,21 +295,25 @@ class HomePage(Page):
 
     def set_run_state(self, state: str, work_id: str | None = None):
         tone = {"idle": "", "running": "ok", "paused": "warn"}[state]
-        self.run_state.set({"idle": "Простаивает", "running": f"Выполняется · работа {work_id}",
-                            "paused": f"Пауза · работа {work_id}"}[state], tone)
+        self.run_state.set({"idle": "Простаивает", "running": f"Выполняется · {work_id}",
+                            "paused": f"Пауза · {work_id}"}[state], tone)
         self.btn_pause.setVisible(state == "running")
         self.btn_resume.setVisible(state == "paused")
         self.btn_stop.setVisible(state != "idle")
+        self.bar.setVisible(state != "idle")
+        self.progress_lbl.setVisible(state != "idle")
         if state == "idle":
             self.run_text.setText("Выберите работу на вкладке «Работы» или запустите её командой из Telegram.")
             self.bar.setRange(0, 1)
             self.bar.setValue(0)
             self.bar.setFormat("")
+            self.progress_lbl.setText("")
 
     def set_progress(self, done: int, total: int, note: str):
         self.bar.setRange(0, max(total, 1))
         self.bar.setValue(done)
         self.bar.setFormat(f"{done} из {total}")
+        self.progress_lbl.setText(f"{done} из {total}")
         self.run_text.setText(note)
 
     def set_result(self, text: str):
@@ -247,24 +321,34 @@ class HomePage(Page):
 
 
 # ============================================================ Работы
-class WorkCard(Card):
+class WorkCard(QFrame):
+    """Строка работы: предмет, название, срок; справа — действия."""
+
     def __init__(self, work: dict, is_new: bool, on_run, on_dry):
         super().__init__()
+        self.setObjectName("workRow")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(18, 14, 14, 14)
+        lay.setSpacing(16)
+        info = QVBoxLayout()
+        info.setSpacing(6)
         subject = str(work.get("subject", ""))
-        top = row(label(subject[:1].upper() + subject[1:], "chip", wrap=False),
-                  label("Новая", "chip", wrap=False) if is_new else None, None)
-        self.body.addLayout(top)
-        title = label(f"<b>{work.get('title', '')}</b>", wrap=True)
-        self.body.addWidget(title)
+        chips = [label(subject[:1].upper() + subject[1:], "chip", wrap=False)]
+        if is_new:
+            chips.append(label("Новая", "chipAccent", wrap=False))
+        info.addLayout(row(*chips, None, spacing=6))
+        title = label(str(work.get("title", "")), "workTitle", wrap=True)
+        info.addWidget(title)
         if work.get("deadline"):
-            self.body.addWidget(label(f"до {work['deadline']}", "hint"))
-        run = QPushButton("▶  Выполнить")
-        run.setObjectName("primary")
-        dry = QPushButton("Только заполнить")
+            info.addWidget(label(f"Срок: до {work['deadline']}", "hint"))
+        lay.addLayout(info, 1)
+        dry = _btn("Только заполнить", "ghost")
+        dry.setToolTip("Ответы будут выставлены, но не отправлены — проверите и нажмёте «Ответить» сами")
+        run = _btn("Выполнить", "primary", icon="play")
         run.clicked.connect(lambda: on_run(work["id"], work.get("title", "")))
         dry.clicked.connect(lambda: on_dry(work["id"]))
-        dry.setToolTip("Ответы будут выставлены, но не отправлены — проверите и нажмёте «Ответить» сами")
-        self.body.addLayout(row(run, dry, None))
+        lay.addWidget(dry, 0, Qt.AlignVCenter)
+        lay.addWidget(run, 0, Qt.AlignVCenter)
 
 
 _LAST_STYLE = {"kind": "normal", "min": 10, "sec": 0, "grade": 4}      # выбор запоминается до закрытия приложения
@@ -275,45 +359,65 @@ class RunDialog(QDialog):
 
     def __init__(self, parent, title: str):
         super().__init__(parent)
-        self.setWindowTitle("Выполнить работу?")
+        self.setWindowTitle("Выполнить работу")
         lay = QVBoxLayout(self)
-        lay.addWidget(label(
-            f"«{title}»\n\nПриложение само нажмёт «Начать», ответит на задания и завершит работу. "
-            "Это может потратить попытку, и отменить результат нельзя.", wrap=True))
-        self.r_normal = QRadioButton("Обычный — с обычными паузами (настраиваются в «Настройках»)")
-        self.r_fast = QRadioButton("Быстрый — минимальные паузы")
-        self.r_stealth = QRadioButton("Скрытный — за заданное время и на заданную оценку")
+        lay.setContentsMargins(26, 24, 26, 22)
+        lay.setSpacing(14)
+        h = QLabel("Выполнить работу?")
+        h.setObjectName("pageTitle")
+        h.setStyleSheet("font-size: 22px;")
+        lay.addWidget(h)
+        lay.addWidget(label(f"«{title}»", "rowTitle"))
+        lay.addWidget(label("Приложение само нажмёт «Начать», ответит на задания и завершит работу. "
+                            "Это может потратить попытку, и отменить результат нельзя.", "muted"))
+        lay.addWidget(section("Режим"))
+        self.r_normal = OptionCard("Обычный", "Паузы из «Настроек»", "spark")
+        self.r_fast = OptionCard("Быстрый", "Минимальные паузы", "bolt")
+        self.r_stealth = OptionCard("Скрытный", "За заданное время и на заданную оценку", "moon")
+        opts = QHBoxLayout()
+        opts.setSpacing(10)
         for r in (self.r_normal, self.r_fast, self.r_stealth):
-            lay.addWidget(r)
+            opts.addWidget(r)
+        lay.addLayout(opts)
         self.stealth_box = QFrame()
+        self.stealth_box.setObjectName("card")
         sb = QVBoxLayout(self.stealth_box)
+        sb.setContentsMargins(16, 14, 16, 14)
+        sb.setSpacing(10)
         self.minutes = NumField(1, 240, _LAST_STYLE["min"], 0, width=70)
         self.seconds = NumField(0, 59, _LAST_STYLE["sec"], 0, width=70)
-        sb.addLayout(row(label("Время:", wrap=False), self.minutes, label("мин", wrap=False), self.seconds,
-                         label("с", wrap=False), None))
+        t = QWidget()
+        t.setLayout(row(self.minutes, label("мин", "muted", wrap=False), self.seconds, label("с", "muted", wrap=False),
+                        spacing=8))
+        sb.addWidget(SettingRow("Время выполнения", t))
         self.grade = QComboBox()
         for g, (lo, hi) in GRADE_BANDS.items():
-            self.grade.addItem(f"{g}  ({int(lo)}–{int(hi)}%)", g)
+            self.grade.addItem(f"{g}   ·   {int(lo)}–{int(hi)}%", g)
         self.grade.setCurrentIndex(max(0, list(GRADE_BANDS).index(_LAST_STYLE["grade"])))
-        sb.addLayout(row(label("Оценка:", wrap=False), self.grade, None))
+        sb.addWidget(SettingRow("Оценка", self.grade, control_width=150))
         sb.addWidget(label(
-            "Часть заданий будет решена верно, часть оставлена без ответа, часть решена неверно или частично — "
-            "так, чтобы набрать процент из выбранного диапазона. Если время «ровное» (целые минуты), оно слегка "
-            "размывается (±57 с), но в лимит времени работы укладывается. Оценка ожидаемая: верность ответов "
-            "модели заранее неизвестна.", "hint"))
+            "Целые минуты слегка размываются (±57 с), но лимит времени работы соблюдается. Часть заданий будет "
+            "решена верно, часть оставлена без ответа, часть решена неверно или частично — так, чтобы набрать "
+            "процент из выбранного диапазона. Оценка ожидаемая: верность ответов модели заранее неизвестна.",
+            "hint"))
         lay.addWidget(self.stealth_box)
         {"fast": self.r_fast, "stealth": self.r_stealth}.get(_LAST_STYLE["kind"], self.r_normal).setChecked(True)
         self.r_stealth.toggled.connect(self._sync)
         self._sync()
-        ok, cancel = QPushButton("Выполнить"), QPushButton("Отмена")
-        ok.setObjectName("primary")
+        ok, cancel = _btn("Выполнить", "primary", icon="play"), _btn("Отмена", "ghost")
         ok.clicked.connect(self.accept)
         cancel.clicked.connect(self.reject)
+        lay.addSpacing(4)
         lay.addLayout(row(None, cancel, ok))
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(640)
 
     def _sync(self) -> None:
         self.stealth_box.setVisible(self.r_stealth.isChecked())
+        # окно верхнего уровня не учитывает перенос строк само: высоту считаем по ширине
+        w = max(self.width(), self.minimumWidth())
+        h = self.layout().totalHeightForWidth(w)
+        self.setFixedHeight(h)
+        self.resize(w, h)
 
     def style(self) -> RunStyle:
         kind = "stealth" if self.r_stealth.isChecked() else ("fast" if self.r_fast.isChecked() else "normal")
@@ -330,25 +434,29 @@ class WorksPage(Page):
 
     def __init__(self):
         super().__init__("Работы", "Новые проверочные работы из вашего аккаунта ЯКласс")
-        self.refresh = QPushButton("Обновить")
+        self.refresh = _btn("Обновить", icon="refresh")
         self.refresh.clicked.connect(self.refresh_requested.emit)
         self.status = label("", "muted")
         self.content.addLayout(row(self.status, self.refresh, fill=self.status))
         self.list_host = QWidget()
         self.list = QVBoxLayout(self.list_host)
         self.list.setContentsMargins(0, 0, 0, 0)
-        self.list.setSpacing(12)
+        self.list.setSpacing(10)
+        self.empty = label("Здесь появятся новые работы. Нажмите «Обновить» или дождитесь уведомления.", "empty")
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.list.addWidget(self.empty)
         self.list.addStretch(1)
-        self.content.addWidget(scrolled(self.list_host), 1)
+        self.content.addWidget(self.list_host, 1)
         self.busy = False
 
     def set_works(self, works: list[dict], new_ids: set[str] | list[str] = ()):
-        while self.list.count() > 1:
-            w = self.list.takeAt(0).widget()
+        while self.list.count() > 2:
+            w = self.list.takeAt(1).widget()
             if w:
                 w.deleteLater()
         for i, w in enumerate(works):
-            self.list.insertWidget(i, WorkCard(w, w["id"] in set(new_ids), self._run, self._dry))
+            self.list.insertWidget(1 + i, WorkCard(w, w["id"] in set(new_ids), self._run, self._dry))
+        self.empty.setVisible(not works)
         self.status.setText(f"Найдено работ: {len(works)}" if works else "Новых работ нет.")
 
     def set_message(self, text: str):
@@ -368,6 +476,17 @@ def _num(lo: float, hi: float, value: float, decimals: int = 1) -> NumField:
     return NumField(lo, hi, value, decimals)
 
 
+def _group(*rows_: QWidget) -> Card:
+    """Карточка со строками настроек, разделёнными тонкими линиями."""
+    c = Card()
+    c.body.setSpacing(12)
+    for i, r in enumerate(rows_):
+        if i:
+            c.body.addWidget(divider())
+        c.body.addWidget(r)
+    return c
+
+
 class SettingsPage(Page):
     saved = Signal(object)                    # AppSettings
     install_chromium_requested = Signal()
@@ -376,66 +495,83 @@ class SettingsPage(Page):
 
     def __init__(self):
         super().__init__("Настройки", "Изменения применяются после нажатия «Сохранить»")
-        host = QWidget()
-        col = QVBoxLayout(host)
-        col.setContentsMargins(0, 0, 8, 0)
-        col.setSpacing(14)
+        col = self.content
+        col.setSpacing(10)
+        W = 320
         # --- сервер
-        c = Card("Сервер", "Адрес сервера, к которому вы привязываете приложение (его даёт администратор бота).")
         self.server = QLineEdit()
         self.server.setPlaceholderText("https://solver.example.com")
         self.device = QLineEdit()
-        c.body.addWidget(form_row("Адрес сервера", self.server))
-        c.body.addWidget(form_row("Имя этого компьютера", self.device, "Показывается в списке привязанных приложений."))
-        col.addWidget(c)
+        col.addWidget(section("Подключение"))
+        col.addWidget(_group(
+            SettingRow("Адрес сервера", self.server, "Его даёт администратор бота.", control_width=W),
+            SettingRow("Имя этого компьютера", self.device, "Показывается в списке привязанных приложений.",
+                       control_width=W)))
         # --- решатель
-        c = Card("Решатель ответов")
-        self.mode_server = QRadioButton("Сервер — общий API, у сервера есть суточный лимит запросов")
-        self.mode_own = QRadioButton("Свой API — запросы идут прямо с этого компьютера, ключ хранится только здесь")
+        col.addSpacing(10)
+        col.addWidget(section("Решатель ответов"))
+        solver = Card()
+        self.mode_server = OptionCard("Сервер", "Общий API; у сервера есть суточный лимит запусков", "spark")
+        self.mode_own = OptionCard("Свой API", "Запросы идут прямо с этого компьютера, ключ хранится только здесь",
+                                   "bolt")
         self.mode_server.toggled.connect(self._toggle_own)
-        c.body.addWidget(self.mode_server)
-        c.body.addWidget(self.mode_own)
+        modes = QHBoxLayout()
+        modes.setSpacing(10)
+        modes.addWidget(self.mode_server)
+        modes.addWidget(self.mode_own)
+        solver.body.addLayout(modes)
         self.own = QWidget()
         ol = QVBoxLayout(self.own)
-        ol.setContentsMargins(0, 6, 0, 0)
-        ol.setSpacing(10)
+        ol.setContentsMargins(0, 8, 0, 0)
+        ol.setSpacing(12)
         self.api_url = QLineEdit()
         self.api_model = QLineEdit()
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.Password)
-        self.api_vision = QCheckBox("Модель понимает картинки (vision)")
-        self.api_json = QCheckBox("Режим JSON (response_format=json_object)")
+        self.api_vision = Toggle()
+        self.api_json = Toggle()
         self.searx = QLineEdit()
         self.searx.setPlaceholderText("необязательно, например http://192.168.1.10:8080")
         self.search_mode = QComboBox()
         self.search_mode.addItem("Искать перед каждым ответом", "always")
         self.search_mode.addItem("Модель решает сама", "model")
         self.search_mode.addItem("Не искать", "off")
-        ol.addWidget(form_row("Адрес API (OpenAI-совместимый)", self.api_url, "OpenAI, DeepSeek, OpenRouter, Ollama, LM Studio…"))
-        ol.addWidget(form_row("Модель", self.api_model))
-        ol.addWidget(form_row("Ключ API", self.api_key, "Пусто — оставить прежний. Локальным серверам ключ не нужен."))
-        ol.addWidget(self.api_vision)
-        ol.addWidget(self.api_json)
-        ol.addWidget(form_row("SearXNG", self.searx))
-        ol.addWidget(form_row("Поиск", self.search_mode))
-        c.body.addWidget(self.own)
-        col.addWidget(c)
+        for i, r in enumerate((
+                SettingRow("Адрес API", self.api_url, "OpenAI-совместимый: OpenAI, DeepSeek, OpenRouter, Ollama, LM Studio…",
+                           control_width=W),
+                SettingRow("Модель", self.api_model, control_width=W),
+                SettingRow("Ключ API", self.api_key, "Пусто — оставить прежний. Локальным серверам ключ не нужен.",
+                           control_width=W),
+                SettingRow("Модель понимает картинки", self.api_vision, "vision"),
+                SettingRow("Режим JSON", self.api_json, "response_format = json_object"),
+                SettingRow("SearXNG", self.searx, "Поиск по интернету перед ответом", control_width=W),
+                SettingRow("Поиск", self.search_mode, control_width=W))):
+            ol.addWidget(divider())
+            ol.addWidget(r)
+        solver.body.addWidget(self.own)
+        col.addWidget(solver)
         # --- темп
-        c = Card("Темп работы", "Паузы делают работу неторопливой. Сервер может задать минимальную паузу между заданиями.")
+        col.addSpacing(10)
+        col.addWidget(section("Темп работы"))
         self.p_between = (_num(0, 600, 1), _num(0, 600, 3))
         self.p_submit = (_num(0, 120, 0.5), _num(0, 120, 1.5))
         self.p_field = (_num(0, 60, 0.25, 2), _num(0, 60, 0.9, 2))
         self.p_type = (_num(0, 1000, 40, 0), _num(0, 1000, 110, 0))
-        for cap, pair, hint in (("Пауза между заданиями, секунд", self.p_between, "случайное значение от … до …"),
-                                ("Пауза перед «Ответить», секунд", self.p_submit, ""),
-                                ("Пауза между полями, секунд", self.p_field, ""),
-                                ("Задержка на символ при вводе, миллисекунд", self.p_type, "")):
+        pace_rows = []
+        for cap, pair, hint in (("Пауза между заданиями", self.p_between, "секунд, случайно от … до …"),
+                                ("Пауза перед «Ответить»", self.p_submit, "секунд"),
+                                ("Пауза между полями", self.p_field, "секунд"),
+                                ("Задержка на символ при вводе", self.p_type, "миллисекунд")):
             w = QWidget()
-            w.setLayout(row(pair[0], QLabel("—"), pair[1], None))
-            c.body.addWidget(form_row(cap, w, hint))
-        col.addWidget(c)
+            w.setLayout(row(pair[0], label("—", "muted", wrap=False), pair[1], spacing=8))
+            pace_rows.append(SettingRow(cap, w, hint))
+        pace = _group(*pace_rows)
+        pace.body.insertWidget(0, label("Паузы делают работу неторопливой. Сервер может задать минимальную паузу "
+                                        "между заданиями.", "hint"))
+        col.addWidget(pace)
         # --- браузер
-        c = Card("Браузер")
+        col.addSpacing(10)
+        col.addWidget(section("Браузер"))
         self.bmode = QComboBox()
         self.bmode.addItem("Собственный профиль приложения (рекомендуется)", "profile")
         self.bmode.addItem("Куки из моего браузера", "cookies")
@@ -446,53 +582,55 @@ class SettingsPage(Page):
         self.channel.addItem("Встроенный Chromium Playwright", "")
         self.channel.addItem("Установленный Google Chrome", "chrome")
         self.channel.addItem("Установленный Microsoft Edge", "msedge")
-        self.show_browser = QCheckBox("Показывать окно браузера при выполнении (скрытый режим сайт может отклонять)")
+        self.show_browser = Toggle()
         self.bmode.currentIndexChanged.connect(self._toggle_cookie)
-        c.body.addWidget(form_row("Откуда брать вход в ЯКласс", self.bmode,
-                                  "Профиль: войдите один раз кнопкой на главной. Куки: берутся из выбранного браузера "
-                                  "(на Windows с новым Chrome это часто не работает)."))
-        self.cookie_row = form_row("Браузер, из которого читать куки", self.cookie_browser)
-        c.body.addWidget(self.cookie_row)
-        self.btn_chromium = QPushButton("Скачать Chromium (~150 МБ)")
+        self.cookie_row = SettingRow("Браузер, из которого читать куки", self.cookie_browser, control_width=W)
+        self.btn_chromium = _btn("Скачать Chromium (~150 МБ)", icon="download")
         self.btn_chromium.clicked.connect(self.install_chromium_requested.emit)
-        c.body.addWidget(form_row("Браузер для выполнения", self.channel,
-                                  "Windows: Microsoft Edge уже есть в системе. Если выбранного браузера нет, "
-                                  "скачайте встроенный Chromium и выберите его."))
-        c.body.addWidget(self.btn_chromium)
         self.browser_path = QLineEdit()
         self.browser_path.setPlaceholderText("необязательно, например /usr/bin/chromium")
-        c.body.addWidget(form_row("Путь к браузеру", self.browser_path,
-                                  "Если не находится: укажите Chrome, Chromium или Edge. Приложение само пробует найти "
-                                  "любой подходящий браузер на компьютере."))
-        c.body.addWidget(self.show_browser)
-        col.addWidget(c)
+        col.addWidget(_group(
+            SettingRow("Откуда брать вход в ЯКласс", self.bmode,
+                       "Профиль: войдите один раз кнопкой на главной. Куки: берутся из выбранного браузера "
+                       "(на Windows с новым Chrome это часто не работает).", control_width=W),
+            self.cookie_row,
+            SettingRow("Браузер для выполнения", self.channel,
+                       "Windows: Microsoft Edge уже есть в системе. Если выбранного браузера нет, скачайте "
+                       "встроенный Chromium.", control_width=W),
+            SettingRow("Встроенный Chromium", self.btn_chromium, "Нужен, только если подходящего браузера нет."),
+            SettingRow("Путь к браузеру", self.browser_path,
+                       "Если не находится: укажите Chrome, Chromium или Edge.", control_width=W),
+            SettingRow("Показывать окно браузера", self.show_browser,
+                       "Скрытый (без окна) режим сайт может отклонять.")))
         # --- приложение
-        c = Card("Приложение")
-        self.remote = QCheckBox("Разрешить запуск работ командой из Telegram")
-        self.auto_poll = QCheckBox("Сам проверять новые работы (раз в … минут; откроет окно браузера на несколько секунд)")
+        col.addSpacing(10)
+        col.addWidget(section("Приложение"))
+        self.remote = Toggle()
+        self.auto_poll = Toggle()
         self.poll = _num(5, 1440, 60, 0)
-        self.check_updates = QCheckBox("Узнавать о новых версиях при запуске (ничего не скачивается)")
-        self.btn_check_updates = QPushButton("Проверить обновления")
+        self.check_updates = Toggle()
+        self.btn_check_updates = _btn("Проверить обновления", icon="refresh")
         self.btn_check_updates.clicked.connect(self.check_updates_requested.emit)
         self.update_msg = label("", "hint")
         self.theme = QComboBox()
         self.theme.addItem("Тёмная", "dark")
         self.theme.addItem("Светлая", "light")
-        c.body.addWidget(self.remote)
-        c.body.addWidget(self.auto_poll)
-        c.body.addWidget(form_row("Период проверки, минут", self.poll,
-                                  "Не чаще раза в 5 минут. Без этой опции список работ обновляется кнопкой «Обновить» и по команде из Telegram."))
-        c.body.addWidget(form_row("Тема", self.theme))
-        c.body.addWidget(self.check_updates)
-        c.body.addLayout(row(self.btn_check_updates, self.update_msg, fill=self.update_msg))
-        col.addWidget(c)
+        upd = QWidget()
+        upd.setLayout(row(self.btn_check_updates, self.update_msg, fill=self.update_msg))
+        col.addWidget(_group(
+            SettingRow("Запуск работ из Telegram", self.remote, "Разрешить боту запускать работы на этом компьютере."),
+            SettingRow("Сам проверять новые работы", self.auto_poll,
+                       "Откроет окно браузера на несколько секунд. Без этого список обновляется кнопкой «Обновить» "
+                       "и по команде из Telegram."),
+            SettingRow("Период проверки", self.poll, "минут, не чаще раза в 5 минут"),
+            SettingRow("Тема", self.theme, control_width=180),
+            SettingRow("Узнавать о новых версиях", self.check_updates, "При запуске; ничего не скачивается без вас."),
+            upd))
         col.addStretch(1)
-        self.content.addWidget(scrolled(host), 1)
         self.err = label("", "muted")
-        self.btn_save = QPushButton("Сохранить")
-        self.btn_save.setObjectName("primary")
+        self.btn_save = _btn("Сохранить", "primary", icon="check")
         self.btn_save.clicked.connect(self._save)
-        self.content.addLayout(row(self.err, self.btn_save, fill=self.err))
+        self.add_footer(row(self.err, self.btn_save, fill=self.err))
         self._base = AppSettings()
 
     def _toggle_own(self):
@@ -583,20 +721,22 @@ class SettingsPage(Page):
 # ============================================================ Журнал
 class LogPage(Page):
     def __init__(self):
-        super().__init__("Журнал", "Что делает приложение прямо сейчас")
+        super().__init__("Журнал", "Что делает приложение прямо сейчас", scroll=False)
         self.view = QPlainTextEdit()
+        self.view.setObjectName("console")
         self.view.setReadOnly(True)
         self.view.setMaximumBlockCount(5000)
-        mono = self.view.font()
-        mono.setFamily("monospace")
-        self.view.setFont(mono)
-        clear = QPushButton("Очистить")
+        clear = _btn("Очистить", "ghost", icon="trash")
         clear.clicked.connect(self.view.clear)
-        copy = QPushButton("Копировать всё")
+        copy = _btn("Копировать всё", "ghost", icon="copy")
         copy.clicked.connect(lambda: (self.view.selectAll(), self.view.copy()))
         self.content.addWidget(self.view, 1)
-        self.content.addLayout(row(copy, clear, None))
+        self.content.addLayout(row(None, copy, clear))
 
     def add(self, text: str):
         for line in str(text).splitlines() or [""]:
             self.view.appendPlainText(f"{time.strftime('%H:%M:%S')}  {line}" if line.strip() else "")
+
+
+__all__ = ["HomePage", "WorksPage", "SettingsPage", "LogPage", "RunDialog", "WorkCard", "release_notes_text",
+           "greeting", "form_row", "icon_label"]

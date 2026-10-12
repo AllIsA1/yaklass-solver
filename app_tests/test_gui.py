@@ -159,7 +159,7 @@ def test_chips_and_version_are_capitalized_and_aligned(ui):
     from PySide6.QtWidgets import QLabel
     from yaklass_app.gui.pages import WorkCard
     card = WorkCard({"id": "1", "subject": "биология", "title": "Т"}, True, lambda *a: None, lambda *a: None)
-    assert [w.text() for w in card.findChildren(QLabel) if w.objectName() == "chip"] == ["Биология", "Новая"]
+    assert [w.text() for w in card.findChildren(QLabel) if w.objectName() in ("chip", "chipAccent")] == ["Биология", "Новая"]
     card.deleteLater()
     ver = next(w for w in ui.win.findChildren(QLabel) if w.objectName() == "version")
     assert ver.text().startswith("Версия ")
