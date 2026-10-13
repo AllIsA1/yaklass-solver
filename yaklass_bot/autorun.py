@@ -23,7 +23,8 @@ from .filler import fill_task
 from .guard import SiteBlocked, SiteChallenge, check_page
 from .models import Task
 from .pace import Pace
-from .parser import page_kind, parse_exercise, parse_nav, parse_overview, parse_preview
+from .parser import (page_kind, parse_exercise, parse_nav, parse_overview, parse_preview, parse_result,
+                     parse_work_title)
 from .pipeline import solve
 from .runner import choose_work, handle_preview, resolve_url, wait_page_ready
 from .session import DEFAULT_UA, load_cookies, to_playwright_cookies
@@ -72,6 +73,10 @@ class RunResult:
     fatal: str = ""                  # причина аварийной остановки (лимит, сервер недоступен)
     note: str = ""
     est_percent: float | None = None  # скрытный режим: ожидаемый процент выполнения (в предположении верных ответов)
+    title: str = ""                  # название работы (со страницы выполнения)
+    earned: float | None = None      # набрано баллов (со страницы после завершения)
+    total: float | None = None       # максимум баллов
+    percent: float | None = None     # реальный процент = набрано / максимум
     stealth: "Stealth | None" = None  # состояние скрытного прохода (для итогов)
 
     @property
@@ -375,6 +380,33 @@ def finish_work(page, base_url: str, log: Log, finish_anyway: bool = False) -> b
     return _complete_by_button(page, log)
 
 
+def read_result(page, res: "RunResult", log: Log) -> None:
+    """Реальные баллы и процент — с той страницы, на которую сайт перешёл после завершения (без новых запросов).
+    Если баллов на ней нет, один раз открывается «Список заданий»."""
+    try:
+        try:
+            page.wait_for_load_state("load", timeout=15_000)
+        except Exception:  # noqa: BLE001
+            pass
+        html = page.content()
+        if not res.title:
+            res.title = parse_work_title(html)
+        r = parse_result(html)
+        if not r.known:
+            link = page.locator("a.test-ex-nav-v2__overview").first
+            if link.count():
+                page.goto(urljoin(page.url, link.get_attribute("href")))
+                page.wait_for_load_state("load")
+                r = parse_result(page.content())
+        if r.known:
+            res.earned, res.total, res.percent = r.earned, r.total, r.percent
+            log(f"  результат: {r.earned:g} из {r.total:g} баллов — {r.percent:g}%")
+        else:
+            log("  результат: на странице нет итоговых баллов" + (f" (не проверено заданий: {r.pending})" if r.pending else ""))
+    except Exception as e:  # noqa: BLE001 — итог не должен ломать завершённую работу
+        log(f"  результат прочитать не удалось: {e}")
+
+
 def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome], *, resume: bool = False,
                submit: bool = True, pace: Pace | None = None, control: RunControl | None = None,
                on_progress: Callable[[int, int, str], None] | None = None, style: RunStyle | None = None,
@@ -388,6 +420,8 @@ def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome]
         check_page(html0)                       # блокировка / проверка «не робот» -> понятная причина
         raise ValueError(f"неожиданная страница вместо задания: {page.url}")
     first = parse_exercise(html0)
+    if result is not None and not result.title:
+        result.title = parse_work_title(html0)
     attempt = attempt_id(page.url)
     if attempt == "unknown":
         attempt = attempt_id(first.form_action)      # адрес мог не содержать id попытки — он есть в action формы
@@ -477,6 +511,8 @@ def execute(page, base_url: str, solve_fn: SolveFn, table, log: Log, *, resume: 
         res.note = "остались задания без ответа — работа не завершена, доделайте вручную"
         return res
     res.completed = finish_work(page, base_url, log, finish_anyway)
+    if res.completed:
+        read_result(page, res, log)
     if res.completed and screenshot_dir is not None:
         screenshot_dir.mkdir(parents=True, exist_ok=True)
         path = screenshot_dir / f"{attempt_id(page.url)}-finished.png"

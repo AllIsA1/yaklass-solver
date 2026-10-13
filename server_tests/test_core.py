@@ -180,3 +180,17 @@ def test_status_text_still_available_on_request():
     c.hub.last_status[5] = {"type": "status", "state": "running", "work_id": "111"}
     t = c.status_text(user)
     assert "онлайн" in t and "running" in t and "111" in t
+
+
+def test_finished_message_shows_real_percent_points_and_title():
+    ev = {"type": "finished", "work_id": "24383457", "title": "Ing and the infinitive <b>", "completed": True,
+          "elapsed_s": 432, "est_percent": 78.0, "percent": 84.6, "earned": 11, "total": 13,
+          "summary": {"новых ответов": 9}}
+    assert render_event(ev)[0] == "✅ Работа «Ing and the infinitive &lt;b&gt;» сделана за 7 мин 12 с на 85% (11/13)"
+    ev.update(earned=11.5, total=13, percent=88.46)
+    assert render_event(ev)[0].endswith("на 88% (11,5/13)")
+    for k in ("percent", "earned", "total"):
+        ev.pop(k)                                                 # итог не прочитан — запасной вариант с «~»
+    assert "~78%" in render_event(ev)[0] and "Ing and the infinitive" in render_event(ev)[0]
+    ev.pop("title")
+    assert render_event(ev)[0].startswith("✅ Работа 24383457 сделана")

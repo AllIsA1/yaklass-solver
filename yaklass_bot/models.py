@@ -66,6 +66,22 @@ class Overview:
 
 
 @dataclass
+class WorkResult:
+    """Итог работы по баллам со страницы «Список заданий» после завершения."""
+    earned: float | None = None       # набрано (None — страница баллов не показала)
+    total: float | None = None        # максимум
+    pending: int = 0                  # заданий, за которые балл ещё «?» (не проверены)
+
+    @property
+    def known(self) -> bool:
+        return self.earned is not None and bool(self.total) and self.pending == 0
+
+    @property
+    def percent(self) -> float | None:
+        return round(100.0 * self.earned / self.total, 1) if self.known else None
+
+
+@dataclass
 class Option:
     value: str
     text: str

@@ -33,6 +33,12 @@ def app_mark(size: int) -> QWidget:
     return lb
 
 
+def _pts(v) -> str:
+    """Баллы: 11 или 11,5."""
+    f = float(v or 0)
+    return str(int(f)) if f == int(f) else f"{f:.1f}".replace(".", ",")
+
+
 NAV = [("Главная", "home"), ("Работы", "works"), ("Настройки", "settings"), ("Журнал", "log")]
 
 
@@ -284,13 +290,16 @@ class MainWindow(QMainWindow):
                     self.run_async(self.agent.server_info, self._show_quota)
             self.refresh_link_state(p.get("message", "") if name == "unlinked" else "")
         elif name == "state":
-            self.home.set_run_state(p["state"], p.get("work_id"))
+            self.home.set_run_state(p["state"], p.get("title") or p.get("work_id"))
         elif name == "progress":
             self.home.set_progress(p["done"], p["total"], p.get("note", ""))
         elif name == "finished":
             ok = p.get("completed")
             parts = ", ".join(f"{k}: {v}" for k, v in (p.get("summary") or {}).items())
-            self.home.set_result(("Работа завершена. " if ok else "Работа не завершена. ") + (p.get("note") or "") +
+            score = ""
+            if p.get("percent") is not None and p.get("total"):
+                score = f" Результат: {p['percent']:g}% ({_pts(p.get('earned'))}/{_pts(p.get('total'))})."
+            self.home.set_result(("Работа завершена." if ok else "Работа не завершена.") + score + " " + (p.get("note") or "") +
                                  (f"\n{parts}" if parts else ""))
             self.log.add(f"Итог: {parts} — {p.get('note', '')}")
         elif name == "works":

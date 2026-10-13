@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlparse
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 from .mathml import to_text as math_to_text
-from .models import Field, NavItem, Option, Overview, OverviewRow, Task, Work, WorkInfo
+from .models import Field, NavItem, Option, Overview, OverviewRow, Task, Work, WorkInfo, WorkResult
 
 BLOCK_TAGS = {"div", "p", "br", "li", "tr", "h1", "h2", "h3", "h4"}
 
@@ -244,6 +244,35 @@ def parse_nav(html: str) -> list[NavItem]:
                              is_current="is-current" in (li.get("class") or []),
                              is_answered="is-answered" in (li.get("class") or [])))
     return items
+
+
+def parse_work_title(html: str) -> str:
+    """Название работы со страницы выполнения (#itemtitle); пусто, если не нашлось."""
+    el = _soup(html).select_one("#itemtitle")
+    return el.get_text(" ", strip=True) if el else ""
+
+
+def parse_result(html: str) -> WorkResult:
+    """Баллы по заданиям в «Списке заданий»: «<набрано> / <максимум>» у каждой строки. «?» — ещё не проверено
+    (так выглядит список до завершения работы). Строки без баллов (теория) не учитываются."""
+    earned = total = 0.0
+    seen = pending = 0
+    for cell in _soup(html).select(".test-exercise-list-v2__row .points-cell-v2__value"):
+        got = cell.select_one(".points-cell-v2__earned")
+        text = cell.get_text(" ", strip=True)
+        m = re.search(r"/\s*(\d+(?:[.,]\d+)?)", text)
+        if m is None:
+            continue
+        seen += 1
+        total += float(m.group(1).replace(",", "."))
+        g = _num(got.get_text(strip=True)) if got is not None else None
+        if g is None:
+            pending += 1
+        else:
+            earned += g
+    if not seen:
+        return WorkResult()
+    return WorkResult(earned=earned, total=total, pending=pending)
 
 
 def parse_overview(html: str) -> Overview:

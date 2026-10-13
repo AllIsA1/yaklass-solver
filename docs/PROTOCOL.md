@@ -46,7 +46,7 @@
 | `hello` | `device` |
 | `works` | `works: [{id, subject, title, deadline}]`, `new: bool` |
 | `progress` | `work_id, done, total, note` |
-| `finished` | `work_id, completed: bool, summary: {…}, note`; в скрытном режиме ещё `est_percent` (ожидаемый процент) |
+| `finished` | `work_id, title, completed: bool, summary: {…}, note`; после завершения ещё `earned, total, percent` (реальные баллы и процент со страницы результата, если они на ней есть); в скрытном режиме — `est_percent` (ожидаемый) |
 | `error` | `message` |
 | `status` | `state: idle|running|paused, work_id` |
 | `ack` | `cmd, ok: bool, msg` |

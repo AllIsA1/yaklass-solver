@@ -126,6 +126,32 @@ def test_remote_start_passes_style_and_reports_estimate(setup):
     assert setup.backend.styles[-1] == RunStyle("fast")
 
 
+def test_finished_event_carries_title_and_real_result(setup):
+    link_and_start(setup)
+    orig = setup.backend.run_work
+
+    def run(*a, **k):
+        res = orig(*a, **k)
+        res.title, res.earned, res.total, res.percent = "Ing and the infinitive", 11.0, 13.0, 84.6
+        return res
+    setup.backend.run_work = run
+    setup.server.command(1, {"cmd": "start_work", "work_id": "111", "mode": "auto"})
+    assert wait_for(lambda: setup.server.events_of("finished"), 10)
+    fin = setup.server.events_of("finished")[0]
+    assert fin["title"] == "Ing and the infinitive" and fin["earned"] == 11.0 and fin["total"] == 13.0
+    assert fin["percent"] == 84.6
+
+
+def test_title_comes_from_works_list_when_run_does_not_know_it(setup):
+    link_and_start(setup)
+    setup.agent.refresh_works()                                  # заполняет works.csv (названия работ)
+    assert setup.agent.work_title("111") == "Тема 1" and setup.agent.work_title("999") == ""
+    setup.server.command(1, {"cmd": "start_work", "work_id": "111", "mode": "auto"})
+    assert wait_for(lambda: setup.server.events_of("finished"), 10)
+    assert setup.server.events_of("finished")[0]["title"] == "Тема 1"
+    assert "earned" not in setup.server.events_of("finished")[0]      # итог не прочитан — не выдумываем
+
+
 def test_invalid_style_is_rejected_by_agent(setup):
     from yaklass_bot.stealth import RunStyle
     link_and_start(setup)

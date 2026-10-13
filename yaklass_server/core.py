@@ -80,7 +80,8 @@ class Core:
         st = self.hub.last_status.get(user.tg_id)
         if st:
             lines.append(f"Состояние: {esc(st.get('state', '?'))}"
-                         + (f", работа {esc(st['work_id'])}" if st.get("work_id") else ""))
+                         + (f", работа «{esc(st['title'])}»" if st.get("title")
+                            else (f", работа {esc(st['work_id'])}" if st.get("work_id") else "")))
         if not online:
             lines.append("Запустите приложение на компьютере — оно подключится само.")
         return "\n".join(lines)
@@ -112,17 +113,40 @@ def _count(v) -> int:
         return 0
 
 
+def fmt_pts(v) -> str:
+    """Баллы: 11 или 11,5."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "?"
+    return str(int(f)) if f == int(f) else f"{f:.1f}".replace(".", ",")
+
+
+def _is_num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def work_label(ev: dict) -> str:
+    """«Работа «Название»»; если названия нет — с номером."""
+    title = str(ev.get("title") or "").strip()
+    wid = str(ev.get("work_id") or "")
+    return f"Работа «{esc(title)}»" if title else (f"Работа {esc(wid)}" if wid else "Работа")
+
+
 def render_finished(ev: dict) -> str:
-    """«Работа N сделана за X на Z%»: Z — доля заданий с отправленным ответом среди всех, кроме теории."""
+    """«Работа «Название» сделана за X на Z% (11/13)»: Z и баллы — реальные, со страницы результата.
+    Нет их (страница баллов не показала) — ожидаемый процент скрытного режима или доля отправленных заданий."""
     summary = ev.get("summary") if isinstance(ev.get("summary"), dict) else {}
     done = sum(_count(v) for k, v in summary.items() if k in _SENT_NAMES)
     total = sum(_count(v) for k, v in summary.items() if k != _THEORY_NAME)
     if isinstance(ev.get("tasks_total"), int):            # с заданиями, до которых проход не дошёл
         total = max(total, ev["tasks_total"] - _count(summary.get(_THEORY_NAME)))
-    wid = str(ev.get("work_id") or "")
-    work = f"Работа {esc(wid)}" if wid else "Работа"
+    work = work_label(ev)
     took = f" за {fmt_duration(ev['elapsed_s'])}" if isinstance(ev.get("elapsed_s"), int) else ""
     pct = round(100 * done / total) if total else 0
+    if _is_num(ev.get("percent")) and _is_num(ev.get("earned")) and _is_num(ev.get("total")) and ev["total"]:
+        return (f"✅ {work} сделана{took} на {round(ev['percent'])}% "
+                f"({fmt_pts(ev['earned'])}/{fmt_pts(ev['total'])})")
     est = ev.get("est_percent")
     if isinstance(est, (int, float)) and not isinstance(est, bool):   # скрытный режим: процент — по баллам
         pct = round(est)

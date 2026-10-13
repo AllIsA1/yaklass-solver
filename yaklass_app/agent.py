@@ -90,10 +90,21 @@ class Agent:
         logging.getLogger("yaklass").info(text.replace("\n", " | "))
         self.emit("log", text=text)
 
+    def work_title(self, work_id: str | None) -> str:
+        """Название работы из списка работ (его мы уже знаем — без запросов к сайту)."""
+        if not work_id:
+            return ""
+        try:
+            row = works_table(self.dir).get(str(work_id))
+        except Exception:  # noqa: BLE001
+            row = None
+        return (row or {}).get("title", "") or ""
+
     def _set_state(self, state: str, work: str | None = None) -> None:
         self.state, self.current_work = state, work if state != "idle" else None
-        self.emit("state", state=self.state, work_id=self.current_work)
-        self._send({"type": "status", "state": self.state, "work_id": self.current_work or ""})
+        title = self.work_title(self.current_work)
+        self.emit("state", state=self.state, work_id=self.current_work, title=title)
+        self._send({"type": "status", "state": self.state, "work_id": self.current_work or "", "title": title})
 
     def _send(self, ev: dict) -> None:
         with self._send_lock:
@@ -366,11 +377,14 @@ class Agent:
             res = self.backend.run_work(work_id, mode, lambda task, lg: solver.solve(task, lg), pace, control,
                                         self.log, on_progress, style=style)
             summary = {STATUS_NAMES.get(k, k): v for k, v in res.summary().items()}
-            payload = {"work_id": work_id, "completed": res.completed, "summary": summary, "note": res.note,
-                       "stopped": res.stopped, "fatal": res.fatal, "est_percent": res.est_percent}
+            title = res.title or self.work_title(work_id)
+            payload = {"work_id": work_id, "title": title, "completed": res.completed, "summary": summary,
+                       "note": res.note, "stopped": res.stopped, "fatal": res.fatal, "est_percent": res.est_percent,
+                       "earned": res.earned, "total": res.total, "percent": res.percent}
             self.emit("finished", **payload)
-            self._send({"type": "finished", **{k: payload[k] for k in ("work_id", "completed", "summary", "note")},
-                        **({"est_percent": res.est_percent} if res.est_percent is not None else {})})
+            extra = {k: payload[k] for k in ("est_percent", "earned", "total", "percent") if payload[k] is not None}
+            self._send({"type": "finished", **{k: payload[k] for k in ("work_id", "title", "completed", "summary",
+                                                                       "note")}, **extra})
         except Exception as e:  # noqa: BLE001
             self.log(f"Ошибка выполнения: {e}")
             self.emit("error", message=str(e))
