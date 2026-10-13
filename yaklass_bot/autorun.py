@@ -261,44 +261,118 @@ def _visible(loc) -> bool:
         return False
 
 
-def finish_work(page, base_url: str, log: Log, finish_anyway: bool = False) -> bool:
-    """Открывает «Список заданий» и жмёт «Завершить» в форме завершения. Форма есть, только когда на все
-    задания дан ответ. Не проверено на живом сайте."""
+FINISH_BTN = "#finishTestBtn"        # «Завершить» на странице «Список заданий»: открывает окно подтверждения
+CANCEL_RX = re.compile(r"^\s*(отмен|закры|нет\b|назад|cancel|no\b|close)", re.I)
+DIALOG_BUTTONS = ("[role=dialog] button, .ui-dialog button, .ui-dialog-buttonpane button, .yk-dialog button, "
+                  ".dialog-container button, .modal button")
+
+
+def _press_confirm(page, wait_s: float = 8.0) -> str:
+    """Ждёт окно подтверждения и нажимает в нём кнопку согласия («Завершить», «Да»...). Отказные кнопки
+    («Отмена», «Закрыть») не трогает. -> подпись нажатой кнопки или ''."""
+    end = time.time() + wait_s
+    while time.time() < end:
+        try:
+            loc = page.locator(DIALOG_BUTTONS)
+            for i in range(loc.count()):
+                b = loc.nth(i)
+                if not b.is_visible():
+                    continue
+                text = (b.inner_text() or b.get_attribute("value") or "").strip()
+                if text and CONFIRM_RX.match(text) and not CANCEL_RX.match(text):
+                    b.click()
+                    return text
+        except Exception:  # noqa: BLE001 — окно перерисовывается / страница уходит
+            pass
+        time.sleep(0.4)
+    return ""
+
+
+def _wait_left(page, before: str, timeout_s: float = 20.0) -> bool:
+    """Страница ушла с «Списка заданий» (другой адрес) или кнопки завершения больше нет."""
+    end = time.time() + timeout_s
+    while time.time() < end:
+        try:
+            if page.url != before or not page.locator(FINISH_BTN).count():
+                return True
+        except Exception:  # noqa: BLE001 — контекст уничтожен: страница сменилась
+            return True
+        time.sleep(0.4)
+    return False
+
+
+def _complete_by_form(page, log: Log) -> bool:
+    """Старая разметка: на странице есть форма CompleteTest с кнопкой отправки (иногда — ещё окно подтверждения)."""
     PwError = _pw_error()
-    link = page.locator("a.test-ex-nav-v2__overview").first
-    if link.count():
-        page.goto(urljoin(page.url, link.get_attribute("href")))
-        page.wait_for_load_state("load")
-    ov = parse_overview(page.content())
-    if not ov.can_complete:
-        if ov.unanswered:
-            log("  на странице завершения без ответа: " + ", ".join(r.title for r in ov.unanswered))
-        if not finish_anyway:
-            log("  формы завершения нет — работа не завершена")
-            return False
-        btn = page.locator("#finishTestBtn")            # путь «Завершить» с недоотвеченной работы (непроверенный)
-        if not btn.count():
-            return False
-        btn.first.click()
-        time.sleep(1.5)
-        if not page.locator(COMPLETE_BTN).count():
-            return False
     ctl = page.locator(COMPLETE_BTN).first
+    end = time.time() + 8                                # кнопка появляется после загрузки скриптов страницы
+    while not _visible(ctl) and time.time() < end:
+        time.sleep(0.3)
     if not _visible(ctl):
+        log("  кнопка завершения не появилась")
         return False
     page.once("dialog", lambda d: d.accept())            # на случай нативного confirm()
     before = page.url
     ctl.click()
     time.sleep(1.5)
     try:
-        modal = page.locator("[role=dialog] button, .ui-dialog button, .yk-dialog button, .modal button") \
-            .filter(has_text=CONFIRM_RX)
+        modal = page.locator(DIALOG_BUTTONS).filter(has_text=CONFIRM_RX)
         if _visible(modal):
             modal.first.click()
         page.wait_for_url(lambda u: u != before, timeout=20_000)
     except PwError:
         pass
     return True
+
+
+def _complete_by_button(page, log: Log) -> bool:
+    """Новая разметка: кнопка «Завершить» (#finishTestBtn) открывает окно «Ты уверен, что хочешь завершить…» —
+    в нём нужно нажать вторую кнопку завершения."""
+    handler = lambda d: d.accept()  # noqa: E731 — нативный confirm()
+    page.on("dialog", handler)
+    try:
+        before = page.url
+        btn = page.locator(FINISH_BTN).first
+        btn.scroll_into_view_if_needed()
+        btn.click()
+        pressed = _press_confirm(page)
+        if pressed:
+            log(f"  подтверждение завершения: «{pressed}»")
+        elif page.locator(COMPLETE_BTN).count():         # вместо окна появилась форма завершения
+            return _complete_by_form(page, log)
+        else:
+            log("  окно подтверждения не появилось (возможно, подтверждение нативным окном браузера)")
+        if _wait_left(page, before):
+            return True
+        log("  страница не сменилась после подтверждения — завершение не подтверждено")
+        return False
+    finally:
+        try:
+            page.remove_listener("dialog", handler)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def finish_work(page, base_url: str, log: Log, finish_anyway: bool = False) -> bool:
+    """Открывает «Список заданий» и завершает работу: либо через форму CompleteTest, либо кнопкой «Завершить»
+    с окном подтверждения (вторая кнопка завершения). Без ответа на все задания работа завершается только при
+    finish_anyway."""
+    link = page.locator("a.test-ex-nav-v2__overview").first
+    if link.count():
+        page.goto(urljoin(page.url, link.get_attribute("href")))
+        page.wait_for_load_state("load")
+    ov = parse_overview(page.content())
+    if ov.unanswered:
+        log("  на странице завершения без ответа: " + ", ".join(r.title for r in ov.unanswered))
+    if ov.can_complete:
+        return _complete_by_form(page, log)
+    if not page.locator(FINISH_BTN).count():
+        log("  кнопки завершения нет — работа не завершена")
+        return False
+    if ov.unanswered and not finish_anyway:
+        log("  есть задания без ответа — работа не завершена")
+        return False
+    return _complete_by_button(page, log)
 
 
 def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome], *, resume: bool = False,

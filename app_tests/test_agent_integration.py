@@ -61,10 +61,10 @@ def test_remote_solver_error_mapping(monkeypatch):
     with pytest.raises(FatalSolveError, match="лимит"):
         solver_with(R(429, "дневной лимит 20 запусков работ исчерпан")).solve(sample_task())
     with pytest.raises(SolveError) as e:                                  # 502 — не фатально: следующее задание можно пробовать
-        solver_with(R(502, "модель не дала ответа")).solve(sample_task())
-    assert not isinstance(e.value, FatalSolveError)
-    with pytest.raises(FatalSolveError, match="недоступен"):              # сеть: 3 попытки и стоп
-        solver_with(*[requests.ConnectionError()] * 3).solve(sample_task())
+        solver_with(*[R(502, "модель не дала ответа")] * solvers.ATTEMPTS).solve(sample_task())   # повторы, затем отказ
+    assert not isinstance(e.value, FatalSolveError) and "модель не дала ответа" in str(e.value)
+    with pytest.raises(FatalSolveError, match="недоступен"):              # сеть: все попытки и стоп
+        solver_with(*[requests.ConnectionError()] * solvers.ATTEMPTS).solve(sample_task())
     ok = R(200)
     ok.json = lambda: {"answers": {"e1|dd": "m"}, "confidence": 0.9, "evidence": "e", "remaining_today": 5}
     s = solver_with(R(429, "слишком часто", {"Retry-After": "1"}), ok)    # rate limit: подождали и повторили
@@ -765,3 +765,27 @@ def test_works_list_uses_a_visible_browser_window(tmp_path, monkeypatch):
         assert b.list_works() == [] and seen["headless"] is False and seen["url"].endswith("/TestWork")
     finally:
         b.close()
+
+
+def test_gateway_errors_are_retried_then_succeed(monkeypatch):
+    """522/502 от Cloudflare/шлюза — повтор с паузой; задание не теряется."""
+    from yaklass_app import solvers
+    seq = [type("R", (), {"status_code": 522, "headers": {}, "json": lambda s: {}})(),
+           type("R", (), {"status_code": 502, "headers": {}, "json": lambda s: {"detail": "модель не дала ответа"}})(),
+           type("R", (), {"status_code": 200, "headers": {}, "json": lambda s: {
+               "answers": {"f": "a"}, "confidence": 0.8, "remaining_today": 5}})()]
+    calls, sleeps = [], []
+    monkeypatch.setattr(solvers.requests, "post", lambda *a, **k: calls.append(1) or seq[len(calls) - 1])
+    s = solvers.RemoteSolver("http://x", "yks_t", sleep=sleeps.append)
+    ans = s.solve(sample_task())
+    assert ans.values == {"f": "a"} and len(calls) == 3 and sleeps == [3, 6]
+
+
+def test_gateway_errors_give_up_after_attempts(monkeypatch):
+    from yaklass_app import solvers
+    r = type("R", (), {"status_code": 522, "headers": {}, "json": lambda s: {}})()
+    n = []
+    monkeypatch.setattr(solvers.requests, "post", lambda *a, **k: n.append(1) or r)
+    with pytest.raises(SolveError) as e:
+        solvers.RemoteSolver("http://x", "yks_t", sleep=lambda s: None).solve(sample_task())
+    assert "522" in str(e.value) and len(n) == solvers.ATTEMPTS

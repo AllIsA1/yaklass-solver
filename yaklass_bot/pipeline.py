@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .config import Config
+from .lang import is_english
 from .models import Task
 from .solver.base import Answer, EmptyReply, Provider, solve_task
 from .solver.research import gather_context
@@ -16,6 +17,8 @@ def solve(cfg: Config, provider: Provider, task: Task, log: Callable[[str], None
     model — модель сама просит поиск; off — без поиска."""
     url = cfg.searxng_url
     mode = cfg.search_mode if url else "off"
+    if mode != "off" and is_english(task):
+        mode = "off"          # грамматику не ищут в интернете: сниппеты чужих сайтов только сбивают с правильной формы
     if mode == "always":
         r = gather_context(provider, task, url, n_results=cfg.search_results, fetch_pages=cfg.search_fetch_pages,
                            max_chars=cfg.search_context_chars, allow_skip=cfg.search_skip_computational, log=log)

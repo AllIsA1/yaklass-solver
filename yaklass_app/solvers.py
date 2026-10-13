@@ -17,6 +17,9 @@ from yaklass_bot.solver.base import Answer, FatalSolveError, SolveError
 from .settings import AppSettings
 
 Log = Callable[[str], None]
+ATTEMPTS = 4                                  # попыток на одно задание при сбоях сети/шлюза
+BACKOFF_S = 3                                 # пауза перед повтором растёт: 3, 6, 9 с
+TRANSIENT = (500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530)   # в т. ч. ответы Cloudflare
 TIMEOUT = (10, 200)           # соединение, ответ (модель может думать долго)
 
 
@@ -82,7 +85,7 @@ class RemoteSolver:
 
     def solve(self, task: Task, log: Log = lambda m: None) -> Answer:
         last = ""
-        for attempt in range(3):
+        for attempt in range(ATTEMPTS):
             try:
                 r = requests.post(api_url(self.url, "/v1/solve"), json={**serialize_task(task), "run_id": self.run_id},
                                   headers={"Authorization": f"Bearer {self.token}"}, timeout=TIMEOUT)
@@ -107,6 +110,14 @@ class RemoteSolver:
                 continue
             if r.status_code in (413, 422):
                 raise SolveError(f"сервер отклонил задание: {detail or r.status_code}")
+            if r.status_code in TRANSIENT:                 # шлюз/прокси/сеть: сервер на секунду недоступен — повторить
+                last = detail or f"ошибка сервера {r.status_code}"
+                if attempt < ATTEMPTS - 1:
+                    wait = BACKOFF_S * (attempt + 1)
+                    log(f"  сервер ответил {r.status_code}; повторю через {wait} с")
+                    self._sleep(wait)
+                    continue
+                raise SolveError(last if detail else f"ошибка сервера {r.status_code}")
             raise SolveError(detail or f"ошибка сервера {r.status_code}")
         raise FatalSolveError(f"Сервер недоступен: {last}")
 

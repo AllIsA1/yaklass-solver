@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from ..lang import is_english
 from ..models import Field, Task
 from .images import Image, download
 from .search import SearchError
@@ -68,11 +69,26 @@ def _search_rules(n: int) -> str:
             'я пришлю результаты. Итоговый ответ — JSON с "answers", как описано ниже.')
 
 
+ENGLISH_RULES = (
+    "Это задание по английскому языку. Правила:\n"
+    "- Выбирай форму по грамматике и смыслу всего предложения/текста: время, залог, число, степень сравнения, "
+    "форму глагола (infinitive с to или без, -ing, причастие), артикль, предлог, порядок слов.\n"
+    "- Если вариантов несколько, выбирай единственный грамматически и орфографически правильный; варианты с "
+    "опечатками и несуществующими формами неверны.\n"
+    "- В текстовое поле пиши ТОЛЬКО то, что стоит на месте пропуска, в нужной форме и с правильным написанием. "
+    "Слова, которые уже есть в предложении рядом с полем (the, to, is, ...), не повторяй. Без точки в конце и "
+    "без пояснений.\n"
+    "- Если форма зависит от рисунка — внимательно рассмотри рисунок.\n"
+    "- Перед ответом кратко (по строке на поле) обоснуй выбор в поле \"reasoning\"; потом дай \"answers\".")
+
+
 def build_prompt(task: Task, context: str = "", img_no: dict[str, int] | None = None,
                  max_searches: int = 0) -> str:
     """img_no: url картинки -> её номер среди приложенных к запросу."""
     img_no = img_no or {}
-    lines = [SYSTEM] + ([_search_rules(max_searches)] if max_searches else []) + ["", "Задание:", task.text, ""]
+    english = is_english(task)
+    lines = [SYSTEM] + ([_search_rules(max_searches)] if max_searches else []) + (
+        [ENGLISH_RULES] if english else []) + ["", "Задание:", task.text, ""]
     main = [u for u in task.images]
     if main:
         have = [f"№{img_no[u]}" for u in main if u in img_no]
@@ -87,6 +103,8 @@ def build_prompt(task: Task, context: str = "", img_no: dict[str, int] | None = 
             lines.append(f"- [[{f.name}]] — выбери ВСЕ верные варианты, ответ — список номеров:")
         elif f.options:
             lines.append(f"- [[{f.name}]] — выбери номер варианта:")
+        elif english:
+            lines.append(f"- [[{f.name}]] — впиши слово или форму слова на месте пропуска (только её)")
         else:
             lines.append(f"- [[{f.name}]] — впиши значение (только число/слово, без единиц измерения "
                          "и пояснений; дробь вводится по частям, десятичная запятая как в условии)")
@@ -104,8 +122,13 @@ def build_prompt(task: Task, context: str = "", img_no: dict[str, int] | None = 
     shape = ", ".join(f'"{f.name}": ...' for f in task.fields)
     tail = ', "evidence": "короткая цитата из материалов, подтверждающая ответ, или пустая строка"' \
         if (context or max_searches) else ""
-    lines += ["", 'confidence — твоя честная уверенность: 1.0 только если ответ прямо подтверждён материалами.',
-              f'Формат ответа: {{"answers": {{{shape}}}, "confidence": 0.0-1.0{tail}}}']
+    if english:
+        conf = 'confidence — твоя честная уверенность в ответе (1.0 — если правило однозначно).'
+        reasoning = '"reasoning": "кратко: правило для каждого поля", '
+    else:
+        conf = 'confidence — твоя честная уверенность: 1.0 только если ответ прямо подтверждён материалами.'
+        reasoning = ""
+    lines += ["", conf, f'Формат ответа: {{{reasoning}"answers": {{{shape}}}, "confidence": 0.0-1.0{tail}}}']
     return "\n".join(lines)
 
 
