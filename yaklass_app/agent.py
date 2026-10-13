@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import threading
 import time
@@ -86,6 +87,7 @@ class Agent:
         if text == self._last_logged:
             return
         self._last_logged = text
+        logging.getLogger("yaklass").info(text.replace("\n", " | "))
         self.emit("log", text=text)
 
     def _set_state(self, state: str, work: str | None = None) -> None:

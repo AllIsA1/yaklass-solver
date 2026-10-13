@@ -375,7 +375,13 @@ class PlaywrightBackend(Backend):
             keep = False
             max_points = time_limit_s = None
             try:
+                log(f"Браузер: {getattr(self, 'last_browser', '?')}")
+                try:                     # причина обрыва — в журнал (раньше пропадала вместе с окном)
+                    ctx.on("close", lambda *_: log("Окно браузера закрылось"))
+                except Exception:  # noqa: BLE001
+                    pass
                 page = ctx.new_page()
+                page.on("crash", lambda *_: log("Вкладка браузера аварийно завершилась (crash)"))
                 page.goto(f"{base}/TestWorkRun/Preview/{work_id}")
                 try:
                     self.wait_or_guard(page, "#taskhtml, #test-preview", 30)

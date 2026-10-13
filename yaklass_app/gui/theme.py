@@ -168,8 +168,7 @@ QCheckBox::indicator:checked {{ background: {c['accent']}; border-color: {c['acc
 QRadioButton {{ spacing: 10px; }}
 
 /* ---------- прогресс, прокрутка, подсказки, диалоги ---------- */
-QProgressBar {{ background: {c['surface2']}; border: none; border-radius: 3px; max-height: 6px; min-height: 6px;
-               text-align: center; font-size: 1px; color: transparent; }}
+QProgressBar {{ background: {c['surface2']}; border: none; border-radius: 3px; max-height: 6px; min-height: 6px; }}
 QProgressBar::chunk {{ background: {c['accent']}; border-radius: 3px; }}
 QScrollArea, QScrollArea > QWidget, QScrollArea > QWidget > QWidget {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

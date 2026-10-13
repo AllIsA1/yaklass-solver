@@ -49,7 +49,10 @@ def selftest(browser: bool = False) -> int:
 def main() -> int:
     if "--selftest" in sys.argv or "--selftest-browser" in sys.argv:
         return selftest(browser="--selftest-browser" in sys.argv)
+    from . import diagnostics
     from .backend import ensure_browsers_path
+    from .settings import data_dir
+    diagnostics.setup(data_dir())
     ensure_browsers_path()
     from PySide6.QtWidgets import QApplication
 

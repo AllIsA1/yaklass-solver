@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
                                QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
@@ -413,11 +413,14 @@ class RunDialog(QDialog):
 
     def _sync(self) -> None:
         self.stealth_box.setVisible(self.r_stealth.isChecked())
-        # окно верхнего уровня не учитывает перенос строк само: высоту считаем по ширине
+        QTimer.singleShot(0, self._fit)
+
+    def _fit(self) -> None:
+        """Окно верхнего уровня не учитывает перенос строк само: высоту считаем по ширине."""
         w = max(self.width(), self.minimumWidth())
         h = self.layout().totalHeightForWidth(w)
-        self.setFixedHeight(h)
-        self.resize(w, h)
+        if h > 0:
+            self.resize(w, h)
 
     def style(self) -> RunStyle:
         kind = "stealth" if self.r_stealth.isChecked() else ("fast" if self.r_fast.isChecked() else "normal")
