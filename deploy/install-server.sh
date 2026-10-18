@@ -59,6 +59,8 @@ echo "==> Проверка"
 env_value() { grep -E "^$1=" "$DIR/.env" | tail -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//' | tr -d '"'"'"' '; }
 READY=1
 [ -n "$(env_value TELEGRAM_BOT_TOKEN)" ] || READY=0
+[ -n "$(env_value TELEGRAM_API_ID)" ] || READY=0
+[ -n "$(env_value TELEGRAM_API_HASH)" ] || READY=0
 [ -n "$(env_value LLM_API_KEY)" ] || READY=0
 
 if [ "$WITH_SYSTEMD" = 1 ]; then
@@ -70,7 +72,7 @@ if [ "$WITH_SYSTEMD" = 1 ]; then
     sudo systemctl restart yaklass-solver
     echo "    служба запущена: journalctl -u yaklass-solver -f"
   else
-    echo "    служба включена, но НЕ запущена: заполните TELEGRAM_BOT_TOKEN и LLM_API_KEY в $DIR/.env,"
+    echo "    служба включена, но НЕ запущена: заполните TELEGRAM_BOT_TOKEN, TELEGRAM_API_ID, TELEGRAM_API_HASH и LLM_API_KEY в $DIR/.env,"
     echo "    затем: sudo systemctl start yaklass-solver"
   fi
 fi

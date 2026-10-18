@@ -1,195 +1,136 @@
-"""Telegram-бот (aiogram 3, long polling): привязка приложения и управление им."""
+"""Telegram-бот на Telethon (MTProto): привязка приложения и управление им. Работает как бот (токен от BotFather)
+через API-приложение my.telegram.org (TELEGRAM_API_ID / TELEGRAM_API_HASH); при необходимости — через MTProto-прокси."""
 from __future__ import annotations
 
 import logging
+import re
+import warnings
+from pathlib import Path
 
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telethon import Button, TelegramClient, events
+from telethon.network.connection import (ConnectionTcpFull, ConnectionTcpMTProxyIntermediate,
+                                         ConnectionTcpMTProxyRandomizedIntermediate)
+from telethon.tl.types import InputPeerUser
 
-from yaklass_bot.stealth import GRADE_BANDS, parse_minutes
-
-from .core import DISCLAIMER, HELP, Core, RunTimer, esc, render_event
+from .botlogic import BotLogic, Buttons, Ctx, Reply
+from .core import Core, RunTimer, render_event
+from .mtproxy import MTProxy
 
 log = logging.getLogger("yaklass.bot")
 
-
-def kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t, callback_data=d) for t, d in r] for r in rows])
+COMMAND_RX = re.compile(r"^/(\w+)(?:@(\w+))?(?:\s+(.*))?$", re.S)
 
 
-async def say(m: Message, text: str) -> None:
-    """Отвечает, только если есть что сказать (при успешной команде текст пустой)."""
-    if text:
-        await m.answer(text)
+def to_buttons(rows: Buttons | None):
+    """Строки (подпись, callback_data) -> инлайн-кнопки Telethon."""
+    if not rows:
+        return None
+    return [[Button.inline(text, data=data.encode()) for text, data in row] for row in rows]
 
 
-def build_router(core: Core) -> Router:
-    r = Router()
+def connection_args(proxy: MTProxy | None) -> dict:
+    """Параметры TelegramClient для прямого подключения или через MTProto-прокси."""
+    if proxy is None:
+        return {"connection": ConnectionTcpFull}
+    conn = ConnectionTcpMTProxyRandomizedIntermediate if proxy.padded else ConnectionTcpMTProxyIntermediate
+    return {"connection": conn, "proxy": (proxy.host, proxy.port, proxy.secret)}
 
-    async def user_of(m: Message | CallbackQuery):
-        u = m.from_user
-        user, why = core.register(u.id, u.username or "")
-        if user is None:
-            return None, why
-        if user.banned:
-            return None, "Доступ закрыт."
-        return user, ""
 
-    @r.message(CommandStart())
-    async def start(m: Message, command: CommandObject):
-        invite = (command.args or "").strip() or None
-        user, why = core.register(m.from_user.id, m.from_user.username or "", invite)
-        if user is None:
-            return await m.answer(esc(why))
-        await m.answer(DISCLAIMER + "\n\n" + HELP + "\n\nНачните с /link.")
+class TelegramBot:
+    def __init__(self, core: Core, api_id: int, api_hash: str, session: str | Path, proxy: MTProxy | None = None,
+                 client: TelegramClient | None = None):
+        self.core, self.proxy = core, proxy
+        self.logic = BotLogic(core)
+        self.timer = RunTimer()
+        self.client = client or self._make_client(session, api_id, api_hash, proxy)
+        self.client.parse_mode = "html"
+        self.client.add_event_handler(self._on_message, events.NewMessage(incoming=True))
+        self.client.add_event_handler(self._on_callback, events.CallbackQuery())
+        core.hub.notify = self.notify
 
-    @r.message(Command("help"))
-    async def help_(m: Message):
-        await m.answer(HELP)
+    @staticmethod
+    def _make_client(session, api_id, api_hash, proxy) -> TelegramClient:
+        with warnings.catch_warnings():
+            # Telethon предупреждает «proxy будет проигнорирован, нет python-socks», но MTProto-прокси он обрабатывает
+            # сам (соединение TcpMTProxy), python-socks нужен только для SOCKS/HTTP
+            warnings.filterwarnings("ignore", message="proxy argument will be ignored")
+            return TelegramClient(str(session), api_id, api_hash, **connection_args(proxy))
 
-    @r.message(Command("link"))
-    async def link(m: Message):
-        user, why = await user_of(m)
-        if user is None:
-            return await m.answer(esc(why))
-        code, minutes = core.make_link_code(user)
-        await m.answer(core.link_message(code, minutes))
+    # ------------------------------------------------------------ запуск
+    async def start(self) -> None:
+        if self.proxy is not None:
+            log.info("Telegram: подключение через MTProto-прокси %s", self.proxy.safe())
+            if self.proxy.fake_tls:
+                log.warning("Секрет прокси «ee…» (fake-TLS) Telethon не поддерживает — соединение может не установиться")
+        await self.client.start(bot_token=self.core.s.bot_token)
+        me = await self.client.get_me()
+        log.info("Telegram-бот запущен: @%s", getattr(me, "username", "?"))
 
-    @r.message(Command("unlink"))
-    async def unlink(m: Message):
-        user, why = await user_of(m)
-        if user is None:
-            return await m.answer(esc(why))
-        n = await core.unlink(user.tg_id)
-        await m.answer(f"Отвязано приложений: {n}.")
+    async def run(self) -> None:
+        await self.start()
+        await self.client.run_until_disconnected()
 
-    @r.message(Command("status"))
-    async def status(m: Message):
-        user, why = await user_of(m)
-        if user is None:
-            return await m.answer(esc(why))
-        if core.hub.online(user.tg_id):
-            await core.hub.send_command(user.tg_id, {"cmd": "status"})
-        await m.answer(core.status_text(user))
+    async def stop(self) -> None:
+        await self.client.disconnect()
 
-    @r.message(Command("works"))
-    async def works(m: Message):
-        user, why = await user_of(m)
-        if user is None:
-            return await m.answer(esc(why))
-        await say(m, await core.command(user.tg_id, {"cmd": "list_works"}))
+    # ------------------------------------------------------------ входящие
+    async def _ctx(self, event) -> Ctx:
+        sender = await event.get_sender()
+        username = getattr(sender, "username", "") or ""
+        return Ctx(event.sender_id, username, getattr(sender, "access_hash", None))
 
-    for name in ("pause", "resume", "stop"):
-        def make(n):
-            async def h(m: Message):
-                user, why = await user_of(m)
-                if user is None:
-                    return await m.answer(esc(why))
-                await say(m, await core.command(user.tg_id, {"cmd": n}))
-            return h
-        r.message.register(make(name), Command(name))
+    def _remember(self, ctx: Ctx) -> None:
+        """Адрес пользователя сохраняем в базе (после регистрации): уведомления переживут потерю файла сессии."""
+        if ctx.access_hash:
+            self.core.db.set_access_hash(ctx.tg_id, ctx.access_hash)
 
-    @r.callback_query(F.data.regexp(r"^run:\d{1,12}$"))
-    async def run_ask(cb: CallbackQuery):
-        wid = cb.data.split(":")[1]
-        await cb.message.answer(
-            f"Выполнить работу <code>{wid}</code>?\n"
-            "Приложение само нажмёт «Начать», ответит на задания и завершит работу. Отменить это нельзя.\n"
-            "• <b>Обычно</b> — с обычными паузами;\n"
-            "• <b>Быстро</b> — минимальные паузы;\n"
-            "• <b>Скрытно</b> — за указанное время и на указанную оценку (часть заданий будет оставлена, "
-            "решена неверно или частично).",
-            reply_markup=kb([[("👤 Обычно", f"go:{wid}"), ("⚡ Быстро", f"fast:{wid}")],
-                             [("🥷 Скрытно", f"st:{wid}"), ("🧪 Только заполнить", f"dry:{wid}")],
-                             [("Отмена", "cancel")]]))
-        await cb.answer()
-
-    async def launch(cb: CallbackQuery, cmd: dict):
-        user, why = await user_of(cb)
-        if user is None:
-            return await cb.answer(why, show_alert=True)
-        text = await core.command(user.tg_id, cmd)
-        await cb.message.edit_reply_markup(reply_markup=None)
-        if text:
-            await cb.message.answer(text)                  # только ошибка (приложение офлайн и т.п.)
-        await cb.answer("Запускаю…" if not text else None)   # всплывающая подсказка, не сообщение в чате
-
-    @r.callback_query(F.data.regexp(r"^(go|fast|dry):\d{1,12}$"))
-    async def run_go(cb: CallbackQuery):
-        kind, wid = cb.data.split(":")
-        cmd = {"cmd": "start_work", "work_id": wid, "mode": "dry" if kind == "dry" else "auto",
-               "style": "fast" if kind == "fast" else "normal"}
-        await launch(cb, cmd)
-
-    @r.callback_query(F.data.regexp(r"^st:\d{1,12}$"))
-    async def stealth_time(cb: CallbackQuery):
-        wid = cb.data.split(":")[1]
-        mins = (5, 7, 10, 15, 20, 25, 30, 40)
-        await cb.message.answer(
-            f"🥷 Работа <code>{wid}</code>: за сколько минут выполнить?\n"
-            f"Другое время (например 7:30) — командой <code>/stealth {wid} 7:30 4</code>.",
-            reply_markup=kb([[(f"{m} мин", f"sm:{wid}:{m}") for m in mins[:4]],
-                             [(f"{m} мин", f"sm:{wid}:{m}") for m in mins[4:]], [("Отмена", "cancel")]]))
-        await cb.answer()
-
-    @r.callback_query(F.data.regexp(r"^sm:\d{1,12}:\d{1,3}$"))
-    async def stealth_grade(cb: CallbackQuery):
-        _, wid, m = cb.data.split(":")
-        row_ = [(f"{g} ({int(lo)}–{int(hi)}%)", f"sg:{wid}:{m}:{g}") for g, (lo, hi) in GRADE_BANDS.items()]
-        await cb.message.answer(f"На какую оценку выполнить работу <code>{wid}</code> за {m} мин?",
-                                reply_markup=kb([row_, [("Отмена", "cancel")]]))
-        await cb.answer()
-
-    @r.callback_query(F.data.regexp(r"^sg:\d{1,12}:\d{1,3}:[345]$"))
-    async def stealth_go(cb: CallbackQuery):
-        _, wid, m, g = cb.data.split(":")
-        await launch(cb, {"cmd": "start_work", "work_id": wid, "mode": "auto", "style": "stealth",
-                          "minutes": float(m), "grade": int(g)})
-
-    @r.message(Command("stealth"))
-    async def stealth_cmd(m: Message, command: CommandObject):
-        """/stealth <номер работы> <время: 7, 7.5 или 7:30> <оценка 3-5>"""
-        user, why = await user_of(m)
-        if user is None:
-            return await m.answer(esc(why))
-        parts = (command.args or "").split()
-        usage = "Формат: <code>/stealth &lt;номер работы&gt; &lt;время: 7, 7.5 или 7:30&gt; &lt;оценка 3–5&gt;</code>"
-        if len(parts) != 3 or not parts[0].isdigit() or parts[2] not in ("3", "4", "5"):
-            return await m.answer(usage)
+    async def _on_message(self, event) -> None:
+        if not event.is_private:
+            return
+        m = COMMAND_RX.match((event.raw_text or "").strip())
+        if not m:
+            return
+        name, _mention, args = m.group(1), m.group(2), m.group(3) or ""
         try:
-            minutes = parse_minutes(parts[1])
-        except ValueError as e:
-            return await m.answer(f"{esc(e)}\n{usage}")
-        text = await core.command(user.tg_id, {"cmd": "start_work", "work_id": parts[0], "mode": "auto",
-                                               "style": "stealth", "minutes": minutes, "grade": int(parts[2])})
-        await m.answer(text or "Запускаю.")
+            ctx = await self._ctx(event)
+            replies = await self.logic.command(ctx, name, args)
+            self._remember(ctx)
+        except Exception:  # noqa: BLE001 — ошибка одной команды не должна ронять бота
+            log.exception("ошибка команды /%s", name)
+            replies = [Reply("Произошла ошибка, попробуйте позже.")]
+        for r in replies:
+            await event.respond(r.text, buttons=to_buttons(r.buttons))
 
-    @r.callback_query(F.data == "cancel")
-    async def cancel(cb: CallbackQuery):
-        await cb.message.edit_reply_markup(reply_markup=None)
-        await cb.answer("Отменено")
+    async def _on_callback(self, event) -> None:
+        try:
+            ctx = await self._ctx(event)
+            res = await self.logic.callback(ctx, (event.data or b"").decode("utf-8", "ignore"))
+            self._remember(ctx)
+        except Exception:  # noqa: BLE001
+            log.exception("ошибка кнопки")
+            return await event.answer("Ошибка, попробуйте позже", alert=True)
+        for r in res.replies:
+            await event.respond(r.text, buttons=to_buttons(r.buttons))
+        if res.clear:
+            try:
+                await event.edit(buttons=None)
+            except Exception:  # noqa: BLE001 — сообщение могло быть удалено
+                pass
+        await event.answer(res.answer or "", alert=res.alert)
 
-    return r
-
-
-def build_bot(core: Core) -> tuple[Bot, Dispatcher]:
-    bot = Bot(core.s.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
-    dp.include_router(build_router(core))
-    timer = RunTimer()
-
-    async def notify(tg_id: int, ev: dict) -> None:
-        ev = timer.track(tg_id, ev)
+    # ------------------------------------------------------------ уведомления из приложения
+    async def notify(self, tg_id: int, ev: dict) -> None:
+        ev = self.timer.track(tg_id, ev)
         text, buttons = render_event(ev)
         if not text:
             return
         try:
-            await bot.send_message(tg_id, text, reply_markup=kb([[b] for b in buttons]) if buttons else None)
-        except Exception:  # noqa: BLE001 — пользователь мог заблокировать бота
-            log.warning("не удалось отправить сообщение tg_id=%s", tg_id)
+            await self.client.send_message(self._peer(tg_id), text,
+                                           buttons=to_buttons([[b] for b in buttons]) if buttons else None)
+        except Exception as e:  # noqa: BLE001 — пользователь мог заблокировать бота / адрес неизвестен
+            log.warning("не удалось отправить сообщение tg_id=%s: %s", tg_id, e.__class__.__name__)
 
-    core.hub.notify = notify
-    return bot, dp
+    def _peer(self, tg_id: int):
+        """Telegram по MTProto требует access_hash пользователя: берём сохранённый (иначе — из кэша сессии)."""
+        h = self.core.db.get_access_hash(tg_id)
+        return InputPeerUser(tg_id, h) if h else tg_id

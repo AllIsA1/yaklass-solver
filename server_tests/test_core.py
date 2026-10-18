@@ -158,18 +158,6 @@ def test_no_separate_messages_for_connection_and_state():
     assert render_event({"type": "finished", "completed": True})[0] and render_event({"type": "works", "works": []})[0]
 
 
-def test_bot_say_helper_stays_silent_on_empty_text():
-    from yaklass_server.bot import say
-
-    class M:
-        def __init__(self): self.out = []
-        async def answer(self, t): self.out.append(t)
-    m = M()
-    asyncio.run(say(m, ""))
-    asyncio.run(say(m, "Приложение не запущено."))
-    assert m.out == ["Приложение не запущено."]
-
-
 def test_status_text_still_available_on_request():
     c = core()
     user, _ = c.register(5, "x")

@@ -44,6 +44,10 @@ class Settings:
     trusted_proxy: str = "127.0.0.1"     # чьим X-Forwarded-For верим (адрес nginx)
     # Telegram
     bot_token: str = ""
+    telegram_api_id: int = 0             # api_id / api_hash приложения с my.telegram.org (нужны Telethon)
+    telegram_api_hash: str = ""
+    mtproxy: str = ""                    # MTProto-прокси для бота: tg://proxy?… или host:port:secret (пусто — напрямую)
+    bot_session: str = ""                # файл сессии бота (пусто — рядом с базой: <папка БД>/bot)
     admin_ids: set[int] = field(default_factory=set)
     registration: str = "open"           # open | invite | closed
     # хранилище
@@ -103,6 +107,10 @@ class Settings:
             trusted_proxy=g("TRUSTED_PROXY", "127.0.0.1"),
             port=i("PORT", 8080),
             bot_token=g("TELEGRAM_BOT_TOKEN"),
+            telegram_api_id=i("TELEGRAM_API_ID", 0),
+            telegram_api_hash=g("TELEGRAM_API_HASH"),
+            mtproxy=g("TELEGRAM_MTPROXY"),
+            bot_session=g("TELEGRAM_SESSION"),
             admin_ids={int(x) for x in g("ADMIN_IDS").replace(" ", "").split(",") if x},
             registration=g("REGISTRATION", "open").lower(),
             db_path=g("DB_PATH", "data/server.db"),
@@ -145,6 +153,9 @@ class Settings:
             raise ValueError("PUBLIC_URL должен начинаться с http:// или https://")
         if (self.llm_fallback_base_url or self.llm_fallback_api_key) and not self.llm_fallback_model:
             raise ValueError("Для запасной модели задайте LLM_FALLBACK_MODEL")
+        if self.mtproxy:
+            from .mtproxy import parse_mtproxy
+            parse_mtproxy(self.mtproxy)               # ProxyError (ValueError) с понятным текстом
         if self.registration not in ("open", "invite", "closed"):
             raise ValueError("REGISTRATION должен быть open, invite или closed")
         if self.search_mode not in ("always", "model", "off"):

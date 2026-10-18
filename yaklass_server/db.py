@@ -69,6 +69,10 @@ class Db:
             if path != ":memory:":
                 self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
+            cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(users)")}
+            if "access_hash" not in cols:                    # миграция: адрес пользователя для Telegram (MTProto)
+                self._conn.execute("ALTER TABLE users ADD COLUMN access_hash INTEGER")
+            self._conn.commit()
 
     def _q(self, sql: str, args=()):
         with self._lock, self._conn:
@@ -83,6 +87,13 @@ class Db:
         self._x("INSERT INTO users(tg_id, username, created_at) VALUES(?,?,?) "
                 "ON CONFLICT(tg_id) DO UPDATE SET username=excluded.username", (tg_id, username or "", int(time.time())))
         return self.get_user(tg_id)  # type: ignore[return-value]
+
+    def set_access_hash(self, tg_id: int, access_hash: int) -> None:
+        self._x("UPDATE users SET access_hash=? WHERE tg_id=?", (int(access_hash), tg_id))
+
+    def get_access_hash(self, tg_id: int) -> int | None:
+        r = self._q("SELECT access_hash FROM users WHERE tg_id=?", (tg_id,))
+        return r[0]["access_hash"] if r and r[0]["access_hash"] else None
 
     def get_user(self, tg_id: int) -> User | None:
         r = self._q("SELECT * FROM users WHERE tg_id=?", (tg_id,))

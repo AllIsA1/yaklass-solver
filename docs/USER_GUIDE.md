@@ -124,6 +124,8 @@ journalctl -u yaklass-solver -f              # журнал
 | `DOMAIN` | домен сервера (показывается пользователям в `/link`); `PUBLIC_URL` — полный адрес, если он другой |
 | `HOST`, `PORT` | где слушает сервис (по умолчанию `127.0.0.1:8080`; наружу его отдаёт nginx) |
 | `TELEGRAM_BOT_TOKEN` | токен от BotFather |
+| `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | данные приложения с https://my.telegram.org (нужны боту на Telethon) |
+| `TELEGRAM_MTPROXY` | MTProto-прокси для бота (необязательно): `tg://proxy?server=…&port=…&secret=…` или `host:port:secret` |
 | `ADMIN_IDS` | ваши Telegram id через запятую (проходят регистрацию всегда); свой id можно узнать у бота @userinfobot |
 | `REGISTRATION` | `open` — любой, `invite` — по приглашению, `closed` — только добавленные вами |
 | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | общая модель для всех пользователей; `LLM_VISION`, `LLM_JSON_MODE` — как в приложении |

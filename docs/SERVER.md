@@ -5,7 +5,7 @@
 ```bash
 git clone https://github.com/AllIsA1/yaklass-solver /opt/yaklass-solver && cd /opt/yaklass-solver
 bash deploy/install-server.sh --systemd         # окружение, зависимости, .env, база, служба systemd
-nano .env                                       # DOMAIN, PORT, TELEGRAM_BOT_TOKEN, ADMIN_IDS, LLM_*
+nano .env                                       # DOMAIN, PORT, TELEGRAM_BOT_TOKEN, TELEGRAM_API_ID/HASH, ADMIN_IDS, LLM_*
 sudo systemctl restart yaklass-solver && journalctl -u yaklass-solver -f
 ```
 
@@ -14,6 +14,14 @@ sudo systemctl restart yaklass-solver && journalctl -u yaklass-solver -f
 
 Без `--systemd` он только готовит окружение (запуск вручную: `.venv/bin/yaklass-server`); `--print-unit` показывает
 юнит systemd без установки.
+
+**Telegram.** Бот работает на Telethon (MTProto) как бот: кроме токена от @BotFather нужны `TELEGRAM_API_ID` и
+`TELEGRAM_API_HASH` — на https://my.telegram.org → *API development tools* (создайте приложение, любое название).
+Если Telegram с сервера недоступен напрямую, задайте MTProto-прокси в `TELEGRAM_MTPROXY`: ссылка `tg://proxy?server=…&port=…&secret=…`,
+`https://t.me/proxy?…` или `host:port:secret`; секрет — hex (можно с префиксом `dd`), секреты `ee…` (fake-TLS) Telethon не
+поддерживает. Бот хранит сессию в `data/bot.session` (путь — `TELEGRAM_SESSION`), а адрес каждого пользователя — в базе:
+уведомления доходят после того, как пользователь хотя бы раз написал боту (при переходе с прежней версии — отправьте
+боту `/status` один раз).
 
 **Выход в сеть**
 На данный момент есть готовая конфигурация только для nginx, но вы можете использовать Caddy и прочие аналоги.
