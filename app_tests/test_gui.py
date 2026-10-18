@@ -173,6 +173,10 @@ def test_home_cards_are_not_squeezed_in_a_short_window(qapp):
     assert release_notes_text("## What's Changed\n* **Режимы** выполнения\n- второе\n\n**Full Changelog**: https://x") \
         == "• Режимы выполнения\n• второе"
     assert release_notes_text("**A**\n\n`b`") == "A\nb"
+    template = "Изменения:\n\n* Одно\n* Второе\n* Третье\n"                  # шаблон описаний релизов
+    assert release_notes_text(template) == "• Одно\n• Второе\n• Третье"
+    assert release_notes_text("## Изменения\n- Одно") == "• Одно" and release_notes_text("ИЗМЕНЕНИЯ :\n* А") == "• А"
+    assert release_notes_text("Изменения в разметке страницы\n* Одно") == "Изменения в разметке страницы\n• Одно"
     p.hide()
     p.deleteLater()
     qapp.processEvents()

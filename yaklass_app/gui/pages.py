@@ -97,12 +97,18 @@ def greeting(hour: int | None = None) -> str:
     return "Доброй ночи"
 
 
+HEADING_LINES = ("изменения", "changes", "что нового")
+
+
 def release_notes_text(notes: str, max_lines: int = 200) -> str:
-    """Описание релиза без разметки Markdown и служебных строк GitHub («Full Changelog» и т.п.); списки — «•»."""
+    """Описание релиза без разметки Markdown и служебных строк («Изменения:» — это заголовок самого окна,
+    «Full Changelog» и т.п. от GitHub); списки — «•»."""
     out = []
     for ln in notes.splitlines():
         t = ln.strip().replace("**", "").replace("`", "").lstrip("#").strip()
         if not t or t.lower().startswith(("full changelog", "what's changed")):
+            continue
+        if t.rstrip(":： ").lower() in HEADING_LINES:            # строка-заголовок «Изменения:» не нужна
             continue
         if t[:2] in ("* ", "- "):
             t = "• " + t[2:].strip()
