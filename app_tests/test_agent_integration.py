@@ -389,7 +389,7 @@ def test_friendly_ws_errors():
            '{"detail":"Not Found"}')
     assert "Upgrade" in friendly_ws_error(raw) and "nginx" in friendly_ws_error(raw) and "-+-+-" not in friendly_ws_error(raw)
     assert "502" in friendly_ws_error("Handshake status 502 Bad Gateway -+-+- {}")
-    assert "домен" in friendly_ws_error("[Errno -2] Name or service not known")
+    assert "найти сервер" in friendly_ws_error("[Errno -2] Name or service not known")
     assert "отклонил" in friendly_ws_error("[Errno 111] Connection refused")
     assert friendly_ws_error("что-то иное") == "что-то иное"
 
@@ -815,3 +815,24 @@ def test_gateway_errors_give_up_after_attempts(monkeypatch):
     with pytest.raises(SolveError) as e:
         solvers.RemoteSolver("http://x", "yks_t", sleep=lambda s: None).solve(sample_task())
     assert "522" in str(e.value) and len(n) == solvers.ATTEMPTS
+
+
+def test_link_by_connection_code_saves_server_address_without_showing_it(tmp_path):
+    from .conftest import FakeBackend, RealServer
+    from yaklass_app.agent import Agent
+    from yaklass_bot.connect import make_connection_code
+    srv = RealServer()
+    try:
+        store = Store(tmp_path / "c", use_keyring=False)
+        store.save(AppSettings(server_url=""))                       # адрес вручную не вводился
+        agent = Agent(store, FakeBackend(), directory=tmp_path / "d")
+        with pytest.raises(solvers.LinkError, match="код подключения"):
+            agent.link(srv.new_code())                               # просто код без адреса — адреса нет
+        with pytest.raises(solvers.LinkError, match="код"):
+            agent.link("yk1.не-код")
+        assert store.load().server_url == ""                         # неудачные попытки адрес не сохраняют
+        agent.link(make_connection_code(srv.url, srv.new_code()))
+        assert store.load().server_url == srv.url and store.token
+        agent.shutdown()
+    finally:
+        srv.stop()

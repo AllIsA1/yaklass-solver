@@ -9,6 +9,7 @@ from dataclasses import asdict
 import requests
 
 from yaklass_bot.config import Config
+from yaklass_bot.connect import hide_host
 from yaklass_bot.models import Task
 from yaklass_bot.pipeline import solve as pipeline_solve
 from yaklass_bot.solver.api import ApiProvider
@@ -50,7 +51,7 @@ def link(server_url: str, code: str, device_name: str) -> tuple[str, str]:
     try:
         r = requests.post(api_url(server_url, "/v1/link"), json={"code": code, "device_name": device_name}, timeout=TIMEOUT)
     except requests.RequestException as e:
-        raise LinkError(f"Сервер недоступен: {e}") from e
+        raise LinkError(f"Сервер недоступен: {hide_host(str(e), server_url)}") from e
     if r.status_code == 429:
         raise LinkError("Слишком много попыток. Подождите минуту.")
     if r.status_code != 200:

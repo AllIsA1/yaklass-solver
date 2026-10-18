@@ -31,6 +31,7 @@ from .session import DEFAULT_UA, load_cookies, to_playwright_cookies
 from .solver import FatalSolveError, SolveError, make_provider
 from .solver.base import Answer
 from .stealth import RunStyle, Stealth, corrupt
+from .useragent import build_user_agent
 from .storage import tasks_table
 
 NEW_BTN = "#submitAnswerBtn"          # «Ответить» — на задание ещё нет ответа
@@ -547,7 +548,8 @@ def run_auto(cfg: Config, url: str, *, assume_yes: bool = False, finish_anyway: 
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=False, channel=cfg.run.get("channel") or None)
-            ctx = browser.new_context(user_agent=cfg.run.get("user_agent") or DEFAULT_UA)
+            ctx = browser.new_context(user_agent=cfg.run.get("user_agent")
+                                      or build_user_agent(cfg.browser, getattr(browser, "version", "")) or DEFAULT_UA)
             ctx.add_cookies(to_playwright_cookies(load_cookies(cfg.browser, domain, cfg.cookie_file)))
             page = ctx.new_page()
             page.goto(start)

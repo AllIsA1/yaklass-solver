@@ -76,6 +76,8 @@ def main() -> int:
     window = MainWindow(agent, store, bridge)
     window.show()
     agent.start()
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(1500, window.offer_chromium)          # выбран встроенный Chromium, а его нет — предложить установить
     return app.exec()
 
 

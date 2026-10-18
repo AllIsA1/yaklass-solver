@@ -154,7 +154,7 @@ QLineEdit, QComboBox, QPlainTextEdit {{
     selection-background-color: {c['sel']}; selection-color: {c['text']}; }}
 QLineEdit:hover, QComboBox:hover {{ border-color: {c['faint']}; }}
 QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {c['accent']}; }}
-QLineEdit#codeInput {{ font-family: {MONO}; font-size: 15px; letter-spacing: 2px; padding: 8px 12px; }}
+QLineEdit#codeInput {{ font-family: {MONO}; font-size: 13px; padding: 8px 12px; }}
 QComboBox::drop-down {{ border: none; width: 28px; }}
 QComboBox::down-arrow {{ image: url({chev}); width: 14px; height: 14px; }}
 QComboBox QAbstractItemView {{ background: {c['surface']}; border: 1px solid {c['border2']}; border-radius: 8px;

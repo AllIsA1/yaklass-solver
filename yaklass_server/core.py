@@ -5,6 +5,7 @@ import html
 import time
 
 from yaklass_bot.autorun import SENT, STATUS_NAMES
+from yaklass_bot.connect import make_connection_code
 
 from . import security
 from .db import Db, User
@@ -60,10 +61,10 @@ class Core:
         return code, self.s.link_code_ttl_s // 60
 
     def link_message(self, code: str, minutes: int) -> str:
-        """Сначала адрес сервера, затем код, затем пояснения (срок действия и конфиденциальность)."""
-        return (f"<b>Адрес сервера:</b>\n<code>{esc(self.s.public_url)}</code>\n\n"
-                f"<b>Код привязки:</b>\n<code>{esc(code)}</code>\n\n"
-                f"Введите адрес и код в приложении на компьютере. Код действует {minutes} мин и одноразовый.\n"
+        """Одна строка «код подключения» (адрес сервера внутри неё), затем пояснения."""
+        return (f"<b>Код подключения:</b>\n<code>{esc(make_connection_code(self.s.public_url, code))}</code>\n\n"
+                f"Скопируйте его целиком и вставьте в приложении на компьютере (вкладка «Главная»). "
+                f"Код действует {minutes} мин и одноразовый.\n"
                 "🔒 Никому не передавайте код: с ним можно привязать приложение к вашему аккаунту.")
 
     async def unlink(self, tg_id: int) -> int:

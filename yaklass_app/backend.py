@@ -24,6 +24,7 @@ from yaklass_bot.parser import parse_preview, parse_works_list
 from yaklass_bot.runner import wait_page_ready
 from yaklass_bot.session import load_cookies, to_playwright_cookies
 from yaklass_bot.storage import tasks_table
+from yaklass_bot.useragent import build_user_agent
 
 from .settings import Store, data_dir
 
@@ -42,7 +43,7 @@ def friendly_error(e: BaseException) -> str:
     low = t.lower()
     if "executable doesn't exist" in low or "playwright install" in low:
         return ("Не найден браузер для выполнения. Установите Google Chrome / Microsoft Edge и выберите его в "
-                "Настройки → Браузер или нажмите «Скачать Chromium» там же.")
+                "Настройки → Браузер (если выбран встроенный Chromium — приложение предложит его установить).")
     if "failed to launch" in low or "browser has been closed" in low:
         return "Браузер не запустился или был закрыт. Проверьте выбор браузера в Настройки → Браузер."
     return t.strip().splitlines()[0][:300] if t.strip() else e.__class__.__name__
@@ -80,9 +81,21 @@ def playwright_cache_dir() -> Path:
 def ensure_browsers_path() -> None:
     """В приложении, собранном PyInstaller, Playwright по умолчанию ищет браузеры ВНУТРИ самого приложения
     (PLAYWRIGHT_BROWSERS_PATH=0, см. playwright/_impl/_transport.py) — там их нет и писать нельзя (AppImage только для чтения).
-    Явно указываем обычный кэш (~/.cache/ms-playwright и т.п.): и поиск, и «Скачать Chromium» работают в одном месте."""
+    Явно указываем обычный кэш (~/.cache/ms-playwright и т.п.): и поиск, и установка Chromium работают в одном месте."""
     if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(playwright_cache_dir())
+
+
+def _chromium_patterns() -> list[str]:
+    return {"win32": ["chromium-*/chrome-win*/chrome.exe"],
+            "darwin": ["chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"]}.get(
+        sys.platform, ["chromium-*/chrome-linux*/chrome"])
+
+
+def chromium_installed() -> bool:
+    """Скачан ли встроенный Chromium Playwright (любой ревизии)."""
+    cache = playwright_cache_dir()
+    return any(os.access(p, os.X_OK) for pat in _chromium_patterns() for p in glob.glob(str(cache / pat)))
 
 
 def find_system_browsers() -> list[tuple[str, str]]:
@@ -90,10 +103,7 @@ def find_system_browsers() -> list[tuple[str, str]]:
     Сначала скачанные Playwright (любой версии — лучше «не та» ревизия, чем никакой), затем системные."""
     found: list[tuple[str, str]] = []
     cache = playwright_cache_dir()
-    pats = {"win32": ["chromium-*/chrome-win*/chrome.exe"],
-            "darwin": ["chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"]}.get(
-        sys.platform, ["chromium-*/chrome-linux*/chrome"])
-    for pat in pats:
+    for pat in _chromium_patterns():
         for path in sorted(glob.glob(str(cache / pat)), reverse=True):          # новые ревизии первыми
             if os.access(path, os.X_OK):
                 found.append((f"Chromium Playwright ({Path(path).parents[1].name})", path))
@@ -233,7 +243,7 @@ class PlaywrightBackend(Backend):
             return obj
         raise BackendError("Не найден браузер для выполнения. Пробовал:\n" + "\n".join(tried) +
                            "\nУстановите Google Chrome / Chromium / Microsoft Edge, либо укажите путь к нему в "
-                           "Настройки → Браузер, либо нажмите «Скачать Chromium».")
+                           "Настройки → Браузер, либо выберите встроенный Chromium — приложение предложит его установить.")
 
     # ---- куки профиля ----
     # Куки входа в ЯКласс — СЕССИОННЫЕ (без срока жизни). Chromium не сохраняет такие куки на диск при закрытии,
@@ -294,7 +304,9 @@ class PlaywrightBackend(Backend):
             self._restore(ctx)
             return ctx, ctx.close
         browser = self._launch_any(s, lambda kw: pw.chromium.launch(headless=headless, **kw))
-        ctx = browser.new_context()
+        ua = build_user_agent(s.cookie_browser, getattr(browser, "version", ""))
+        ctx = browser.new_context(user_agent=ua) if ua else browser.new_context()
+        self.last_user_agent = ua or "(строка самого браузера)"
         ctx.add_cookies(cookies)
         return ctx, browser.close
 
@@ -376,6 +388,8 @@ class PlaywrightBackend(Backend):
             max_points = time_limit_s = None
             try:
                 log(f"Браузер: {getattr(self, 'last_browser', '?')}")
+                if s.browser_mode != "profile":
+                    log(f"User-Agent: {getattr(self, 'last_user_agent', '?')}")
                 try:                     # причина обрыва — в журнал (раньше пропадала вместе с окном)
                     ctx.on("close", lambda *_: log("Окно браузера закрылось"))
                 except Exception:  # noqa: BLE001

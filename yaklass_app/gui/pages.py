@@ -151,16 +151,26 @@ class HomePage(Page):
         self.upd.body.addLayout(row(self.btn_upd_install, self.btn_upd_open, None, self.btn_upd_hide))
         self.upd.hide()
 
+        # --- установка Chromium (плашка видна только во время загрузки)
+        self.chrome_card = Card("Установка Chromium", icon="download", name="banner")
+        self.chrome_text = label("Скачиваю встроенный Chromium (~150 МБ). Это займёт несколько минут.", "muted")
+        self.chrome_bar = QProgressBar()
+        self.chrome_bar.setRange(0, 0)                  # без процентов: установщик их не сообщает
+        self.chrome_card.body.addWidget(self.chrome_text)
+        self.chrome_card.body.addWidget(self.chrome_bar)
+        self.chrome_card.hide()
+
         # --- Telegram
         self.tg = Card("Telegram", icon="telegram")
         self.tg_status = Pill("Не привязано", "warn")
         self.tg.head.addWidget(self.tg_status)
         self.tg_info = label("", "hint")
-        self.steps = label("Откройте бота и отправьте <b>/link</b> — он пришлёт код. Введите его ниже.", "muted")
+        self.steps = label("Откройте бота и отправьте <b>/link</b> — он пришлёт код подключения. "
+                           "Скопируйте его целиком и вставьте ниже.", "muted")
         self.code = QLineEdit()
         self.code.setObjectName("codeInput")
-        self.code.setPlaceholderText("XXXX-XXXX")
-        self.code.setMaxLength(12)
+        self.code.setPlaceholderText("Код подключения из бота")
+        self.code.setMaxLength(300)
         self.code.returnPressed.connect(self._link)
         self.btn_link = _btn("Привязать", "primary")
         self.btn_link.clicked.connect(self._link)
@@ -218,6 +228,7 @@ class HomePage(Page):
         self.run.body.addLayout(row(self.btn_pause, self.btn_resume, self.btn_stop, None))
 
         self.content.addWidget(self.upd)
+        self.content.addWidget(self.chrome_card)
         self.content.addLayout(pair)
         self.content.addWidget(self.run)
         self.content.addStretch(1)
@@ -245,6 +256,14 @@ class HomePage(Page):
 
     def hide_update(self):
         self.upd.hide()
+
+    def show_chromium_install(self, text: str = ""):
+        if text:
+            self.chrome_text.setText(text)
+        self.chrome_card.show()
+
+    def hide_chromium_install(self):
+        self.chrome_card.hide()
 
     def set_update_progress(self, done: int, total: int):
         self.upd_progress.show()
@@ -492,7 +511,6 @@ def _group(*rows_: QWidget) -> Card:
 
 class SettingsPage(Page):
     saved = Signal(object)                    # AppSettings
-    install_chromium_requested = Signal()
     check_updates_requested = Signal()
     key_changed = Signal(str)                 # новый ключ своего API
 
@@ -502,12 +520,9 @@ class SettingsPage(Page):
         col.setSpacing(10)
         W = 320
         # --- сервер
-        self.server = QLineEdit()
-        self.server.setPlaceholderText("https://solver.example.com")
         self.device = QLineEdit()
         col.addWidget(section("Подключение"))
         col.addWidget(_group(
-            SettingRow("Адрес сервера", self.server, "Его даёт администратор бота.", control_width=W),
             SettingRow("Имя этого компьютера", self.device, "Показывается в списке привязанных приложений.",
                        control_width=W)))
         # --- решатель
@@ -561,10 +576,10 @@ class SettingsPage(Page):
         self.p_field = (_num(0, 60, 0.25, 2), _num(0, 60, 0.9, 2))
         self.p_type = (_num(0, 1000, 40, 0), _num(0, 1000, 110, 0))
         pace_rows = []
-        for cap, pair, hint in (("Пауза между заданиями", self.p_between, "секунд, случайно от … до …"),
-                                ("Пауза перед «Ответить»", self.p_submit, "секунд"),
-                                ("Пауза между полями", self.p_field, "секунд"),
-                                ("Задержка на символ при вводе", self.p_type, "миллисекунд")):
+        for cap, pair, hint in (("Пауза между заданиями", self.p_between, "Случайно, от … до … секунд"),
+                                ("Пауза перед «Ответить»", self.p_submit, "Случайно, от … до … секунд"),
+                                ("Пауза между полями", self.p_field, "Случайно, от … до … секунд"),
+                                ("Задержка на символ при вводе", self.p_type, "Случайно, от … до … миллисекунд")):
             w = QWidget()
             w.setLayout(row(pair[0], label("—", "muted", wrap=False), pair[1], spacing=8))
             pace_rows.append(SettingRow(cap, w, hint))
@@ -576,11 +591,13 @@ class SettingsPage(Page):
         col.addSpacing(10)
         col.addWidget(section("Браузер"))
         self.bmode = QComboBox()
-        self.bmode.addItem("Собственный профиль приложения (рекомендуется)", "profile")
+        self.bmode.addItem("Собственный профиль приложения", "profile")
         self.bmode.addItem("Куки из моего браузера", "cookies")
         self.cookie_browser = QComboBox()
-        for b in ("chrome", "firefox", "edge", "chromium", "brave", "opera", "vivaldi", "librewolf"):
-            self.cookie_browser.addItem(b, b)
+        for key, name in (("chrome", "Google Chrome"), ("edge", "Microsoft Edge"), ("firefox", "Mozilla Firefox"),
+                          ("brave", "Brave"), ("vivaldi", "Vivaldi"), ("opera", "Opera"), ("chromium", "Chromium"),
+                          ("librewolf", "LibreWolf")):
+            self.cookie_browser.addItem(name, key)
         self.channel = QComboBox()
         self.channel.addItem("Встроенный Chromium Playwright", "")
         self.channel.addItem("Установленный Google Chrome", "chrome")
@@ -588,8 +605,6 @@ class SettingsPage(Page):
         self.show_browser = Toggle()
         self.bmode.currentIndexChanged.connect(self._toggle_cookie)
         self.cookie_row = SettingRow("Браузер, из которого читать куки", self.cookie_browser, control_width=W)
-        self.btn_chromium = _btn("Скачать Chromium (~150 МБ)", icon="download")
-        self.btn_chromium.clicked.connect(self.install_chromium_requested.emit)
         self.browser_path = QLineEdit()
         self.browser_path.setPlaceholderText("необязательно, например /usr/bin/chromium")
         col.addWidget(_group(
@@ -598,9 +613,8 @@ class SettingsPage(Page):
                        "(на Windows с новым Chrome это часто не работает).", control_width=W),
             self.cookie_row,
             SettingRow("Браузер для выполнения", self.channel,
-                       "Windows: Microsoft Edge уже есть в системе. Если выбранного браузера нет, скачайте "
-                       "встроенный Chromium.", control_width=W),
-            SettingRow("Встроенный Chromium", self.btn_chromium, "Нужен, только если подходящего браузера нет."),
+                       "Windows: Microsoft Edge уже есть в системе. Если выбран встроенный Chromium, а его нет, "
+                       "приложение предложит его установить.", control_width=W),
             SettingRow("Путь к браузеру", self.browser_path,
                        "Если не находится: укажите Chrome, Chromium или Edge.", control_width=W),
             SettingRow("Показывать окно браузера", self.show_browser,
@@ -622,10 +636,11 @@ class SettingsPage(Page):
         upd.setLayout(row(self.btn_check_updates, self.update_msg, fill=self.update_msg))
         col.addWidget(_group(
             SettingRow("Запуск работ из Telegram", self.remote, "Разрешить боту запускать работы на этом компьютере."),
-            SettingRow("Сам проверять новые работы", self.auto_poll,
-                       "Откроет окно браузера на несколько секунд. Без этого список обновляется кнопкой «Обновить» "
-                       "и по команде из Telegram."),
-            SettingRow("Период проверки", self.poll, "минут, не чаще раза в 5 минут"),
+            SettingRow("Автоматический поиск новых работ", self.auto_poll,
+                       "Приложение само будет искать новые работы и сообщать о них в Telegram; на несколько секунд "
+                       "открывается окно браузера. Без этого список обновляется кнопкой «Обновить» и по команде "
+                       "из Telegram."),
+            SettingRow("Период поиска", self.poll, "Проверять работы раз в … минут"),
             SettingRow("Тема", self.theme, control_width=180),
             SettingRow("Узнавать о новых версиях", self.check_updates, "При запуске; ничего не скачивается без вас."),
             upd))
@@ -649,7 +664,6 @@ class SettingsPage(Page):
 
     def load(self, s: AppSettings, has_key: bool):
         self._base = s
-        self.server.setText(s.server_url)
         self.device.setText(s.device_name)
         (self.mode_own if s.solver_mode == "own" else self.mode_server).setChecked(True)
         a = s.own_api
@@ -682,7 +696,6 @@ class SettingsPage(Page):
 
     def collect(self) -> AppSettings:
         s = AppSettings(**{k: getattr(self._base, k) for k in AppSettings.__dataclass_fields__})
-        s.server_url = self.server.text().strip().rstrip("/")
         s.device_name = self.device.text().strip() or s.device_name
         s.solver_mode = "own" if self.mode_own.isChecked() else "server"
         s.own_api = {**s.own_api, "base_url": self.api_url.text().strip(), "model": self.api_model.text().strip(),

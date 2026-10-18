@@ -13,6 +13,7 @@ from datetime import datetime
 import websocket
 
 from yaklass_bot.autorun import STATUS_NAMES
+from yaklass_bot.connect import ConnectionCodeError, hide_host, parse_connection_code
 from yaklass_bot.guard import SiteBlocked, SiteChallenge
 from yaklass_bot.control import RunControl
 from yaklass_bot.solver import FatalSolveError, SolveError
@@ -39,9 +40,9 @@ def friendly_ws_error(err) -> str:
     if "certificate" in t.lower() or "ssl" in t.lower():
         return f"Ошибка сертификата HTTPS на сервере: {t[:160]}"
     if "Name or service not known" in t or "getaddrinfo" in t or "Errno -2" in t:
-        return "Не удалось найти сервер по адресу из настроек — проверьте домен."
+        return "Не удалось найти сервер — проверьте интернет; если не помогает, привяжите приложение заново (/link)."
     if "Connection refused" in t:
-        return "Сервер отклонил соединение — проверьте адрес и порт в настройках."
+        return "Сервер отклонил соединение — возможно, он выключен. Попробуйте позже."
     return t[:240]
 
 
@@ -183,7 +184,7 @@ class Agent:
                 info["code"] = code
 
             def on_error(ws, err):
-                text = f"Связь с сервером: {friendly_ws_error(err)}"
+                text = f"Связь с сервером: {hide_host(friendly_ws_error(err), s.server_url)}"
                 if text != self._last_ws_error:                 # одна и та же ошибка при каждой попытке — только раз
                     self._last_ws_error = text
                     self.log(text)
@@ -408,11 +409,20 @@ class Agent:
             self._control.stop()
 
     # ------------------------------------------------------------ действия GUI
-    def link(self, code: str) -> str:
+    def link(self, text: str) -> str:
+        """text — код подключения из бота (адрес сервера внутри него) или просто код (если адрес уже сохранён)."""
         s = self.store.load()
-        if not s.server_url:
-            raise solvers.LinkError("Укажите адрес сервера в настройках")
-        token, username = solvers.link(s.server_url, code, s.device_name)
+        try:
+            url, code = parse_connection_code(text)
+        except ConnectionCodeError as e:
+            raise solvers.LinkError(str(e)) from None
+        server = url or s.server_url
+        if not server:
+            raise solvers.LinkError("Вставьте код подключения целиком: его присылает бот в ответ на /link")
+        token, username = solvers.link(server, code, s.device_name)
+        if server != s.server_url:                    # адрес запоминаем только после удачной привязки
+            s.server_url = server
+            self.store.save(s)
         self.store.token, self.username = token, username
         self.reconnect()
         self.emit("linked", username=username)

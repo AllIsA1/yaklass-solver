@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 import pytest
 
@@ -89,15 +90,17 @@ def test_unfinished_counts_tasks_not_reached():
     assert render_event(other)[0] == "✅ Работа 9 сделана"                     # начала не видели — без времени
 
 
-# ---------- /link: адрес сервера, затем код, затем пояснения ----------
+# ---------- /link: одна строка «код подключения» (адрес сервера внутри) ----------
 
-def test_link_message_order_and_content():
+def test_link_message_gives_single_connection_code():
+    from yaklass_bot.connect import parse_connection_code
     c = core()
     c.s.domain = "solver.example.com"
     msg = c.link_message("ABCD-EFGH", 10)
-    i_url, i_code, i_ttl, i_secret = (msg.index(x) for x in ("https://solver.example.com", "ABCD-EFGH", "10 мин", "Никому не передавайте"))
-    assert i_url < i_code < i_ttl < i_secret                     # именно такой порядок
-    assert "<code>https://solver.example.com</code>" in msg and "<code>ABCD-EFGH</code>" in msg
+    assert "solver.example.com" not in msg and "Адрес сервера" not in msg      # адрес пользователю не показываем
+    code = re.search(r"<code>(.*?)</code>", msg).group(1)
+    assert parse_connection_code(code) == ("https://solver.example.com", "ABCD-EFGH")
+    assert msg.index("Код подключения") < msg.index("10 мин") < msg.index("Никому не передавайте")
 
 
 def test_public_url_variants():
@@ -107,13 +110,6 @@ def test_public_url_variants():
     assert Settings(domain="x.com", public_url_override="https://bot.x.com/").public_url == "https://bot.x.com"
     with pytest.raises(ValueError):
         Settings(public_url_override="bot.x.com").validate()
-
-
-def test_link_message_escapes_html():
-    c = core()
-    c.s.public_url_override = "https://a.example/?x=<b>&y=1"
-    msg = c.link_message("AAAA-BBBB", 10)
-    assert "&lt;b&gt;&amp;y=1" in msg and "?x=<b>" not in msg      # адрес из .env не может сломать разметку Telegram
 
 
 # ---------- бот молчит при успехе и не шлёт отдельных сообщений о состоянии ----------

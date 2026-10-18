@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import requests
 
 from .config import Config
+from .useragent import build_user_agent
 
 DEFAULT_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
@@ -41,7 +42,7 @@ def make_session(cfg: Config) -> requests.Session:
     domain = ".".join(host.split(".")[-2:])
     s = requests.Session()
     s.cookies.update(load_cookies(cfg.browser, domain, cfg.cookie_file))
-    s.headers["User-Agent"] = cfg.run.get("user_agent") or DEFAULT_UA
+    s.headers["User-Agent"] = cfg.run.get("user_agent") or build_user_agent(cfg.browser) or DEFAULT_UA
     s.headers["Accept-Language"] = "ru,en;q=0.8"
     return s
 

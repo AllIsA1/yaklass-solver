@@ -106,7 +106,9 @@ def test_whole_app_state_restored_after_restart(tmp_path, monkeypatch):
         return MainWindow(agent, store, bridge), store, agent
 
     w1, st1, a1 = open_window()
-    w1.settings.server.setText("https://solver.example.com")
+    s0 = st1.load()
+    s0.server_url = "https://solver.example.com"                        # как после привязки по коду подключения
+    st1.save(s0)
     w1.settings.mode_own.setChecked(True)
     w1.settings.api_model.setText("deepseek-chat")
     w1.settings.api_key.setText("sk-own")
@@ -119,7 +121,7 @@ def test_whole_app_state_restored_after_restart(tmp_path, monkeypatch):
 
     w2, st2, a2 = open_window()                                        # «открыли заново»
     s = w2.settings
-    assert s.server.text() == "https://solver.example.com" and s.mode_own.isChecked()
+    assert st2.load().server_url == "https://solver.example.com" and s.mode_own.isChecked()
     assert s.api_model.text() == "deepseek-chat" and s.p_between[0].text() == "5" and s.poll.text() == "45"
     assert "сохранён" in s.api_key.placeholderText()                   # ключ API найден
     assert st2.token == "yks_linked" and w2.home.link_row.isHidden() and not w2.home.btn_unlink.isHidden()

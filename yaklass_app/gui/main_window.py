@@ -3,14 +3,14 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QTimer, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
                                QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import __version__
 from ..agent import Agent
-from ..backend import install_chromium
+from ..backend import chromium_installed, install_chromium
 from ..settings import Store
 from .pages import HomePage, LogPage, SettingsPage, WorksPage
 from .theme import stylesheet
@@ -147,7 +147,6 @@ class MainWindow(QMainWindow):
         self.works.refresh_requested.connect(self.refresh_works)
         self.works.start_requested.connect(self.start_work)
         self.settings.saved.connect(self.on_settings_saved)
-        self.settings.install_chromium_requested.connect(self.do_install_chromium)
         self.settings.check_updates_requested.connect(self.do_check_updates)
         self.home.open_url_requested.connect(lambda u: QDesktopServices.openUrl(QUrl(u)) if u.startswith('https://') else None)
         self.home.dismiss_update_requested.connect(self.home.hide_update)
@@ -219,22 +218,62 @@ class MainWindow(QMainWindow):
             f"Не удалось: {err}" if err else ("" if res else "Новых работ нет или нужен вход в ЯКласс")))
 
     def start_work(self, work_id: str, mode: str, style=None) -> None:
+        if not self.offer_chromium():
+            return
         ok, why = self.agent.start_work(work_id, mode, style=style)
         if not ok:
             QMessageBox.warning(self, "Не удалось запустить", why)
         else:
             self.nav.button(0).click()
 
+    # ------------------------------------------------------------ Chromium
+    def can_prompt(self) -> bool:
+        """Диалоги показываем только на настоящем экране (в тестах и CI без экрана — нет: они бы зависли)."""
+        return QApplication.platformName() not in ("offscreen", "minimal")
+
+    def chromium_missing(self) -> bool:
+        """Выбран встроенный Chromium Playwright (и свой путь к браузеру не задан), а его нет на компьютере."""
+        s = self.store.load()
+        return s.channel == "" and not s.browser_path and not chromium_installed()
+
+    def offer_chromium(self) -> bool:
+        """Всплывающее предложение установить Chromium. True — установка не требуется (можно продолжать)."""
+        if not self.chromium_missing() or not self.can_prompt():
+            return True
+        if getattr(self, "_installing_chromium", False):
+            QMessageBox.information(self, "Chromium устанавливается", "Подождите: Chromium ещё скачивается.")
+            return False
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Нужен Chromium")
+        box.setText("Выбран встроенный Chromium Playwright, но он не установлен.")
+        box.setInformativeText("Для выполнения работ его нужно скачать (около 150 МБ). Установить сейчас?")
+        install = box.addButton("Установить", QMessageBox.AcceptRole)
+        box.addButton("Позже", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is install:
+            self.do_install_chromium()
+        return False
+
     def do_install_chromium(self) -> None:
-        self.settings.btn_chromium.setEnabled(False)
-        self.settings.btn_chromium.setText("Скачиваю…")
-        self.nav.button(3).click()
+        if getattr(self, "_installing_chromium", False):
+            return
+        self._installing_chromium = True
+        self.home.show_chromium_install()
+        self.nav.button(0).click()
+        self.log.add("Скачиваю Chromium…")
 
         def done(ok, err):
-            self.settings.btn_chromium.setEnabled(True)
-            self.settings.btn_chromium.setText("Скачать Chromium (~150 МБ)")
-            self.log.add("Chromium установлен — выберите «Встроенный Chromium» в настройках." if ok and not err
-                         else f"Не удалось скачать Chromium: {err or 'см. журнал'}")
+            self._installing_chromium = False
+            self.home.hide_chromium_install()
+            if ok and not err:
+                self.log.add("Chromium установлен")
+                QMessageBox.information(self, "Chromium установлен", "Готово — теперь можно выполнять работы.")
+            else:
+                self.log.add(f"Не удалось скачать Chromium: {err or 'см. журнал'}")
+                QMessageBox.warning(self, "Не удалось установить Chromium",
+                                    f"{err or 'Подробности — в журнале.'}\n\nМожно выбрать установленный браузер "
+                                    "(Chrome, Edge) в Настройки → Браузер.")
         self.run_async(lambda: install_chromium(lambda m: self.bridge.event.emit("log", {"text": m})), done)
 
     def do_install_update(self) -> None:
@@ -261,13 +300,18 @@ class MainWindow(QMainWindow):
         self.run_async(lambda: self.agent.check_updates(manual=True), lambda res, err: None)
 
     def do_login(self) -> None:
+        if not self.offer_chromium():
+            return
         self.home.set_login(None, "Проверяю…", checking=True)
         self.agent.login_yaklass()
 
     def on_settings_saved(self, s) -> None:
         old = self.store.load()
+        s.server_url = old.server_url          # адрес сервера задаёт только привязка (код подключения), не форма настроек
         self.store.save(s)
         self.apply_theme(s.theme)
+        if (s.channel, s.browser_path) != (old.channel, old.browser_path):
+            QTimer.singleShot(0, self.offer_chromium)
         # соединение с сервером зависит только от адреса сервера; иначе лишний разрыв (и повторные
         # сообщения от бота) при каждом сохранении настроек
         if old.server_url != s.server_url:

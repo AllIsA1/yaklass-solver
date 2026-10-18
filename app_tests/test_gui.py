@@ -69,7 +69,6 @@ def test_unlinked_state_shows_link_form(ui):
 
 def test_settings_roundtrip_through_widgets(ui):
     p = ui.win.settings
-    p.server.setText("https://solver.example.com/")
     p.mode_own.setChecked(True)
     p.api_url.setText("https://api.deepseek.com/v1")
     p.api_model.setText("deepseek-chat")
@@ -80,7 +79,7 @@ def test_settings_roundtrip_through_widgets(ui):
     p.theme.setCurrentIndex(p.theme.findData("light"))
     p.btn_save.click()
     s = ui.store.load()
-    assert s.server_url == "https://solver.example.com"                  # лишний «/» убран
+    assert s.server_url == "http://127.0.0.1:1"                          # адрес сервера в настройках не трогается
     assert s.solver_mode == "own" and s.own_api["model"] == "deepseek-chat" and s.own_api["vision"] is False
     assert s.pace_obj().between_tasks == (4.0, 9.0) and s.theme == "light"
     assert ui.store.own_api_key == "sk-secret" and "sk-secret" not in (ui.store.path.read_text())
@@ -88,11 +87,49 @@ def test_settings_roundtrip_through_widgets(ui):
     assert "Сохранено" in p.err.text()
 
 
-def test_settings_validation_blocks_bad_input(ui):
+def test_settings_have_no_server_address_and_no_chromium_button(ui):
     p = ui.win.settings
-    p.server.setText("ftp://nope")
-    p.btn_save.click()
-    assert "https://" in p.err.text() and ui.store.load().server_url == "http://127.0.0.1:1"
+    assert not hasattr(p, "server") and not hasattr(p, "btn_chromium")
+    from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
+    texts = [w.text() for w in p.findChildren(QLabel)] + [w.text() for w in p.findChildren(QPushButton)]
+    assert not any("Адрес сервера" in t or "Скачать Chromium" in t or "рекомендуется" in t for t in texts)
+    assert not any("127.0.0.1" in e.text() for e in ui.win.findChildren(QLineEdit))      # домен нигде не показан
+
+
+def test_settings_texts(ui):
+    from PySide6.QtWidgets import QLabel
+    texts = [w.text() for w in ui.win.settings.findChildren(QLabel)]
+    assert "Автоматический поиск новых работ" in texts and "Проверять работы раз в … минут" in texts
+    assert texts.count("Случайно, от … до … секунд") == 3 and "Случайно, от … до … миллисекунд" in texts
+    assert not any("Сам проверять" in t or "не чаще раза" in t for t in texts)
+    assert ui.win.settings.bmode.itemText(0) == "Собственный профиль приложения"
+
+
+def test_chromium_offer_only_when_embedded_chromium_is_chosen_and_missing(ui, monkeypatch):
+    from yaklass_app.gui import main_window as mw
+    w = ui.win
+    shown = []
+    monkeypatch.setattr(w, "can_prompt", lambda: True)
+    monkeypatch.setattr(mw.QMessageBox, "exec", lambda self: shown.append(self.text()) or 0)
+    monkeypatch.setattr(mw, "chromium_installed", lambda: True)
+    assert w.offer_chromium() is True and not shown                      # установлен — тихо
+    monkeypatch.setattr(mw, "chromium_installed", lambda: False)
+    s = ui.store.load(); s.channel = "chrome"; ui.store.save(s)
+    assert w.offer_chromium() is True and not shown                      # выбран Chrome — Chromium не нужен
+    s.channel = ""; ui.store.save(s)
+    assert w.offer_chromium() is False and "не установлен" in shown[0]   # выбран встроенный, а его нет — предложение
+    s.browser_path = "/usr/bin/chromium"; ui.store.save(s)
+    assert w.offer_chromium() is True                                    # свой путь к браузеру — не предлагаем
+
+
+def test_start_is_blocked_until_chromium_is_installed(ui, monkeypatch):
+    from yaklass_app.gui import main_window as mw
+    w = ui.win
+    monkeypatch.setattr(w, "can_prompt", lambda: True)
+    monkeypatch.setattr(mw, "chromium_installed", lambda: False)
+    monkeypatch.setattr(mw.QMessageBox, "exec", lambda self: 0)
+    w.start_work("111", "auto")
+    assert not ui.backend.runs and ui.agent.state == "idle"
 
 
 def test_own_api_fields_visible_only_in_own_mode(ui):
@@ -270,7 +307,7 @@ def test_pace_values_survive_save_and_reload(ui):
 
 # ---------- сохранение настроек не рвёт соединение ----------
 
-def test_saving_settings_reconnects_only_when_server_changes(ui):
+def test_saving_settings_never_reconnects_or_changes_server_address(ui):
     calls = []
     ui.agent.reconnect = lambda: calls.append(1)
     p = ui.win.settings
@@ -278,9 +315,11 @@ def test_saving_settings_reconnects_only_when_server_changes(ui):
     p.p_between[0].setText("2")
     p.btn_save.click()
     assert calls == []                                                   # тема/паузы — соединение не трогаем
-    p.server.setText("https://another.example.com")
+    s = ui.store.load()
+    s.server_url = "https://linked.example.com"                          # адрес сохранила привязка (форма настроек устарела)
+    ui.store.save(s)
     p.btn_save.click()
-    assert calls == [1]
+    assert calls == [] and ui.store.load().server_url == "https://linked.example.com"   # сохранение не затирает адрес
 
 
 def test_real_connection_survives_settings_save(qapp, tmp_path):

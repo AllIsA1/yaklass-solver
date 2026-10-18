@@ -23,8 +23,8 @@ sudo systemctl restart yaklass-solver && journalctl -u yaklass-solver -f
 
 **Проверка:** `curl https://<домен>/healthz` → `{"ok":true,...}`
 
-Адрес, который бот показывает в `/link`,
-берётся из `DOMAIN` (или `PUBLIC_URL`, если задан) в `.env`.
+Адрес сервера бот передаёт приложению внутри **кода подключения** (`/link`: строка `yk1.<адрес>.<код>`), пользователь
+его не вводит и не видит. Адрес берётся из `DOMAIN` (или `PUBLIC_URL`, если задан) в `.env`.
 
 ## Управление: `yaklassctl`
 Запускать из `/opt/yaklass-solver` (читает тот же `.env`/БД):
