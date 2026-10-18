@@ -170,7 +170,8 @@ def test_home_cards_are_not_squeezed_in_a_short_window(qapp):
         lay = card.layout()
         need = lay.heightForWidth(card.width()) if lay.hasHeightForWidth() else lay.sizeHint().height()
         assert card.height() >= need, (card.height(), need)       # хватает места под перенос строк
-    assert "Full Changelog" not in p.upd_notes.text() and "**" not in p.upd_notes.text()
+    assert release_notes_text("## What's Changed\n* **Режимы** выполнения\n- второе\n\n**Full Changelog**: https://x") \
+        == "• Режимы выполнения\n• второе"
     assert release_notes_text("**A**\n\n`b`") == "A\nb"
     p.hide()
     p.deleteLater()

@@ -97,15 +97,44 @@ def greeting(hour: int | None = None) -> str:
     return "Доброй ночи"
 
 
-def release_notes_text(notes: str, max_lines: int = 6) -> str:
-    """Описание релиза без разметки Markdown и служебных строк GitHub («Full Changelog» и т.п.)."""
+def release_notes_text(notes: str, max_lines: int = 200) -> str:
+    """Описание релиза без разметки Markdown и служебных строк GitHub («Full Changelog» и т.п.); списки — «•»."""
     out = []
     for ln in notes.splitlines():
         t = ln.strip().replace("**", "").replace("`", "").lstrip("#").strip()
         if not t or t.lower().startswith(("full changelog", "what's changed")):
             continue
+        if t[:2] in ("* ", "- "):
+            t = "• " + t[2:].strip()
         out.append(t)
     return "\n".join(out[:max_lines])
+
+
+class NotesDialog(QDialog):
+    """Описание новой версии: прокручиваемый текст и кнопка «OK» в правом нижнем углу."""
+
+    def __init__(self, parent, version: str, notes: str):
+        super().__init__(parent)
+        self.setWindowTitle("Что нового")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(26, 24, 26, 22)
+        lay.setSpacing(14)
+        h = QLabel(f"Что нового в версии {version}")
+        h.setObjectName("pageTitle")
+        h.setStyleSheet("font-size: 22px;")
+        lay.addWidget(h)
+        self.text = QPlainTextEdit()
+        self.text.setObjectName("notes")
+        self.text.setReadOnly(True)
+        self.text.setPlainText(release_notes_text(notes) or "Описание этого релиза не добавлено.")
+        self.text.setMinimumHeight(220)
+        lay.addWidget(self.text, 1)
+        self.btn_ok = _btn("OK", "primary")
+        self.btn_ok.setDefault(True)
+        self.btn_ok.clicked.connect(self.accept)
+        lay.addLayout(row(None, self.btn_ok))                    # справа внизу
+        self.setMinimumWidth(560)
+        self.resize(600, 420)
 
 
 def _btn(text: str, kind: str = "", icon: str = "", role: str = "") -> QPushButton:
@@ -126,7 +155,6 @@ class HomePage(Page):
     pause_requested = Signal()
     resume_requested = Signal()
     stop_requested = Signal()
-    open_url_requested = Signal(str)
     dismiss_update_requested = Signal()
     install_update_requested = Signal()
 
@@ -136,19 +164,18 @@ class HomePage(Page):
         # --- новая версия (плашка скрыта, пока обновлений нет)
         self.upd = Card("Доступна новая версия", icon="download", name="banner")
         self.upd_text = label("", "muted")
-        self.upd_notes = label("", "hint")
         self.btn_upd_install = _btn("Обновить сейчас", "primary")
         self.btn_upd_install.clicked.connect(self.install_update_requested.emit)
         self.upd_progress = QProgressBar()
         self.upd_progress.setTextVisible(False)          # сколько скачано — в тексте выше и на кнопке
         self.upd_progress.hide()
         self.btn_upd_open = _btn("Что нового")
+        self._upd_notes = ""
         self.btn_upd_hide = _btn("Скрыть", "ghost")
         self._upd_url = ""
-        self.btn_upd_open.clicked.connect(lambda: self.open_url_requested.emit(self._upd_url))
+        self.btn_upd_open.clicked.connect(self.show_release_notes)
         self.btn_upd_hide.clicked.connect(self.dismiss_update_requested.emit)
         self.upd.body.addWidget(self.upd_text)
-        self.upd.body.addWidget(self.upd_notes)
         self.upd.body.addWidget(self.upd_progress)
         self.upd.body.addLayout(row(self.btn_upd_install, self.btn_upd_open, None, self.btn_upd_hide))
         self.upd.hide()
@@ -245,7 +272,7 @@ class HomePage(Page):
 
     def show_update(self, version: str, current: str, notes: str, url: str, can_install: bool = False,
                     ready: bool = False, prefetch: bool = False):
-        self._upd_url, self._upd_version = url, version
+        self._upd_url, self._upd_version, self._upd_notes = url, version, notes
         self.btn_upd_install.setVisible(can_install)
         self.btn_upd_install.setEnabled(True)
         self.btn_upd_install.setText("Установить и перезапустить" if ready else "Обновить сейчас")
@@ -259,10 +286,10 @@ class HomePage(Page):
         else:
             text = "Скачайте сборку на странице релиза и замените файл приложения."
         self.upd_text.setText(f"Версия {version} (у вас {current}). {text}")
-        short = release_notes_text(notes)
-        self.upd_notes.setText(short)
-        self.upd_notes.setVisible(bool(short))
         self.upd.show()
+
+    def show_release_notes(self):
+        NotesDialog(self, getattr(self, "_upd_version", ""), self._upd_notes).exec()
 
     def hide_update(self):
         self.upd.hide()

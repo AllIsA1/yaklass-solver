@@ -3,8 +3,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-from PySide6.QtCore import QTimer, Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
                                QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -150,7 +149,6 @@ class MainWindow(QMainWindow):
         self.works.start_requested.connect(self.start_work)
         self.settings.saved.connect(self.on_settings_saved)
         self.settings.check_updates_requested.connect(self.do_check_updates)
-        self.home.open_url_requested.connect(lambda u: QDesktopServices.openUrl(QUrl(u)) if u.startswith('https://') else None)
         self.home.dismiss_update_requested.connect(self.home.hide_update)
         self.home.install_update_requested.connect(self.do_install_update)
         self.settings.key_changed.connect(lambda k: setattr(self.store, "own_api_key", k))

@@ -162,6 +162,7 @@ QComboBox::drop-down {{ border: none; width: 28px; }}
 QComboBox::down-arrow {{ image: url({chev}); width: 14px; height: 14px; }}
 QComboBox QAbstractItemView {{ background: {c['surface']}; border: 1px solid {c['border2']}; border-radius: 8px;
     padding: 4px; outline: none; selection-background-color: {c['surface2']}; selection-color: {c['text']}; }}
+QPlainTextEdit#notes {{ background: {c['input']}; border: 1px solid {c['border']}; border-radius: 12px; padding: 10px 12px; }}
 QPlainTextEdit#console {{ background: {c['code']}; border: 1px solid {c['border']}; border-radius: 12px;
     padding: 10px 12px; font-family: {MONO}; font-size: 12px; color: {c['text']}; }}
 

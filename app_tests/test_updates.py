@@ -144,7 +144,7 @@ def test_check_updates_setting_default_and_roundtrip(tmp_path):
 
 # ---------- интерфейс ----------
 
-def test_gui_shows_update_card_and_opens_only_https(tmp_path, monkeypatch):
+def test_gui_shows_update_card_and_notes_dialog(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     from yaklass_app.gui.main_window import MainWindow
@@ -160,19 +160,34 @@ def test_gui_shows_update_card_and_opens_only_https(tmp_path, monkeypatch):
     bridge.event.emit("update_available", {"version": "9.9.9", "current": "0.1.7", "url": "https://github.com/x/y/releases/tag/v9.9.9",
                                            "notes": "строка1\n\nстрока2"})
     app.processEvents()
-    assert not win.home.upd.isHidden() and "9.9.9" in win.home.upd_text.text() and "строка2" in win.home.upd_notes.text()
-    opened = []
-    import yaklass_app.gui.main_window as mw
-    monkeypatch.setattr(mw.QDesktopServices, "openUrl", staticmethod(lambda u: opened.append(u.toString())))
+    assert not win.home.upd.isHidden() and "9.9.9" in win.home.upd_text.text()
+    assert "строка2" not in win.home.upd_text.text()                         # описание в плашке не выводится
+    from yaklass_app.gui import pages
+    shown = []
+    monkeypatch.setattr(pages.NotesDialog, "exec", lambda self: shown.append(
+        (self.windowTitle(), self.text.toPlainText(), self.btn_ok.text())) or 1)
     win.home.btn_upd_open.click()
-    assert opened == ["https://github.com/x/y/releases/tag/v9.9.9"]
-    win.home.upd._upd_url = ""
-    win.home.open_url_requested.emit("file:///etc/passwd")               # не https — не открываем
-    win.home.open_url_requested.emit("javascript:alert(1)")
-    assert opened == ["https://github.com/x/y/releases/tag/v9.9.9"]
+    assert shown == [("Что нового", "строка1\nстрока2", "OK")]                  # окно с описанием, браузер не открывается
     win.home.btn_upd_hide.click()
     assert win.home.upd.isHidden()
     bridge.event.emit("update_status", {"ok": False, "message": "Нет связи с GitHub"})
     app.processEvents()
     assert "Нет связи" in win.settings.update_msg.text()
     agent._stop.set()
+
+
+def test_notes_dialog_text_ok_button_bottom_right_and_empty_notes(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from yaklass_app.gui.pages import NotesDialog
+    app = QApplication.instance() or QApplication([])
+    d = NotesDialog(None, "2.0.0", "## What's Changed\n* Новый интерфейс\n* История работ\n\n**Full Changelog**: https://x")
+    d.show()
+    app.processEvents()
+    assert d.windowTitle() == "Что нового" and d.text.isReadOnly()
+    assert d.text.toPlainText() == "• Новый интерфейс\n• История работ"
+    ok = d.btn_ok.geometry()
+    assert ok.center().x() > d.width() / 2 and ok.bottom() > d.height() - 60     # справа внизу
+    e = NotesDialog(None, "2.0.0", "")
+    assert "не добавлено" in e.text.toPlainText()
+    d.close(), e.close()
