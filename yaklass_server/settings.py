@@ -63,6 +63,13 @@ class Settings:
     llm_api_key: str = ""
     llm_vision: bool = True
     llm_json_mode: bool = False
+    # запасная модель (необязательно): включается, если задан LLM_FALLBACK_MODEL; адрес, ключ и флаги по умолчанию — как у основной
+    llm_fallback_model: str = ""
+    llm_fallback_base_url: str = ""
+    llm_fallback_api_key: str = ""
+    llm_fallback_vision: bool | None = None
+    llm_fallback_json_mode: bool | None = None
+    llm_fallback_cooldown_s: int = 60
     # поиск
     searxng_url: str = ""
     search_mode: str = "always"          # always | model | off
@@ -110,6 +117,12 @@ class Settings:
             llm_api_key=g("LLM_API_KEY"),
             llm_vision=b("LLM_VISION", True),
             llm_json_mode=b("LLM_JSON_MODE", False),
+            llm_fallback_model=g("LLM_FALLBACK_MODEL"),
+            llm_fallback_base_url=g("LLM_FALLBACK_BASE_URL"),
+            llm_fallback_api_key=g("LLM_FALLBACK_API_KEY"),
+            llm_fallback_vision=b("LLM_FALLBACK_VISION", True) if g("LLM_FALLBACK_VISION") else None,
+            llm_fallback_json_mode=b("LLM_FALLBACK_JSON_MODE", False) if g("LLM_FALLBACK_JSON_MODE") else None,
+            llm_fallback_cooldown_s=i("LLM_FALLBACK_COOLDOWN_S", 60),
             searxng_url=g("SEARXNG_URL").rstrip("/"),
             search_mode=g("SEARCH_MODE", "always").lower(),
             image_hosts=tuple(h.strip().lower() for h in g("IMAGE_HOSTS", "selcdn.net,yaklass.ru").split(",") if h.strip()),
@@ -130,6 +143,8 @@ class Settings:
     def validate(self) -> None:
         if self.public_url_override and not self.public_url_override.startswith(("http://", "https://")):
             raise ValueError("PUBLIC_URL должен начинаться с http:// или https://")
+        if (self.llm_fallback_base_url or self.llm_fallback_api_key) and not self.llm_fallback_model:
+            raise ValueError("Для запасной модели задайте LLM_FALLBACK_MODEL")
         if self.registration not in ("open", "invite", "closed"):
             raise ValueError("REGISTRATION должен быть open, invite или closed")
         if self.search_mode not in ("always", "model", "off"):

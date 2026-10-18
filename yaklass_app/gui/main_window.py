@@ -12,7 +12,7 @@ from .. import __version__
 from ..agent import Agent
 from ..backend import chromium_installed, install_chromium
 from ..settings import Store
-from .pages import HomePage, LogPage, SettingsPage, WorksPage
+from .pages import HistoryPage, HomePage, LogPage, SettingsPage, WorksPage
 from .theme import stylesheet
 from .widgets import BrandMark, Bridge, Pill, refresh_icons, set_icon, set_theme_name
 
@@ -39,7 +39,7 @@ def _pts(v) -> str:
     return str(int(f)) if f == int(f) else f"{f:.1f}".replace(".", ",")
 
 
-NAV = [("Главная", "home"), ("Работы", "works"), ("Настройки", "settings"), ("Журнал", "log")]
+NAV = [("Главная", "home"), ("Работы", "works"), ("История", "history"), ("Настройки", "settings"), ("Журнал", "log")]
 
 
 class MainWindow(QMainWindow):
@@ -76,8 +76,9 @@ class MainWindow(QMainWindow):
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
         self.stack = QStackedWidget()
-        self.home, self.works, self.settings, self.log = HomePage(), WorksPage(), SettingsPage(), LogPage()
-        self.pages = (self.home, self.works, self.settings, self.log)
+        self.home, self.works, self.history, self.settings, self.log = (
+            HomePage(), WorksPage(), HistoryPage(), SettingsPage(), LogPage())
+        self.pages = (self.home, self.works, self.history, self.settings, self.log)
         for i, ((title, icon), page) in enumerate(zip(NAV, self.pages)):
             b = QPushButton(f"  {title}")
             b.setObjectName("nav")
@@ -144,6 +145,7 @@ class MainWindow(QMainWindow):
         self.home.pause_requested.connect(self.agent.pause)
         self.home.resume_requested.connect(self.agent.resume)
         self.home.stop_requested.connect(self.agent.stop_run)
+        self.history.clear_requested.connect(self.clear_history)
         self.works.refresh_requested.connect(self.refresh_works)
         self.works.start_requested.connect(self.start_work)
         self.settings.saved.connect(self.on_settings_saved)
@@ -153,6 +155,7 @@ class MainWindow(QMainWindow):
         self.home.install_update_requested.connect(self.do_install_update)
         self.settings.key_changed.connect(lambda k: setattr(self.store, "own_api_key", k))
         self.load_settings()
+        self.history.set_items(self.agent.history.items())
 
     # ------------------------------------------------------------ вспомогательное
     def run_async(self, fn: Callable, cb: Callable) -> None:
@@ -193,6 +196,10 @@ class MainWindow(QMainWindow):
         self.settings.load(s, bool(self.store.own_api_key))
         self.home.set_login_mode(s.browser_mode == "cookies", s.cookie_browser)
         self.refresh_link_state()
+
+    def clear_history(self) -> None:
+        self.agent.history.clear()
+        self.history.set_items([])
 
     def refresh_link_state(self, note: str = "") -> None:
         linked = bool(self.store.token)
@@ -281,9 +288,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Нельзя обновиться сейчас", "Идёт выполнение работы. Обновитесь после её окончания.")
             return
         v = self.agent.release.version if self.agent.release else "?"
-        ok = QMessageBox.question(self, "Обновить приложение?",
-                                  f"Будет скачана версия {v}; после проверки контрольной суммы приложение закроется и "
-                                  "откроется заново. Продолжить?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        what = (f"Версия {v} уже скачана и проверена; приложение закроется и откроется заново."
+                if self.agent.update_ready else
+                f"Будет скачана версия {v}; после проверки контрольной суммы приложение закроется и откроется заново.")
+        ok = QMessageBox.question(self, "Обновить приложение?", f"{what} Продолжить?",
+                                  QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ok != QMessageBox.Yes:
             return
 
@@ -346,17 +355,22 @@ class MainWindow(QMainWindow):
             self.home.set_result(("Работа завершена." if ok else "Работа не завершена.") + score + " " + (p.get("note") or "") +
                                  (f"\n{parts}" if parts else ""))
             self.log.add(f"Итог: {parts} — {p.get('note', '')}")
+        elif name == "history":
+            self.history.set_items(self.agent.history.items())
         elif name == "works":
             self.works.set_works(p["works"], p.get("new_ids", []))
         elif name == "login_required":
             self.home.set_login(False, p.get("message", ""))
             self.works.set_message("Нужен вход в ЯКласс — см. главную страницу.")
         elif name == "update_available":
-            self.home.show_update(p["version"], p["current"], p.get("notes", ""), p.get("url", ""), p.get("can_install", False))
+            self.home.show_update(p["version"], p["current"], p.get("notes", ""), p.get("url", ""), p.get("can_install", False),
+                                  p.get("ready", False), p.get("prefetch", False))
             self.settings.update_msg.setText(f"Доступна версия {p['version']}")
             self.log.add(f"Доступна новая версия {p['version']} (у вас {p['current']})")
         elif name == "update_progress":
-            self.home.set_update_progress(p["done"], p["total"])
+            self.home.set_update_progress(p["done"], p["total"], p.get("background", False))
+        elif name == "update_ready":
+            self.home.set_update_ready(p["version"])
         elif name == "update_status":
             self.settings.update_msg.setText(("✓ " if p.get("ok") else "⚠ ") + p.get("message", ""))
         elif name == "login_status":

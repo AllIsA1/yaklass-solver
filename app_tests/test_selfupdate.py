@@ -389,3 +389,84 @@ def test_gui_install_button_flow(tmp_path, monkeypatch):
     app.processEvents()
     assert "5 из 100 МБ" in win.home.upd_progress.format() and not win.home.btn_upd_install.isEnabled()
     a._stop.set()
+
+
+# ---------- фоновая загрузка ----------
+
+def asset_hits(r):
+    return [p for p, _ in r.hits if p.startswith(("/dl/YaklassSolver", "/api-asset/1"))]
+
+
+def test_prefetch_then_install_downloads_only_once(rel, tmp_path):
+    release = release_of(rel)
+    plan_target = tmp_path / "App.AppImage"
+    plan_target.write_bytes(OLD)
+    plan = updater.Plan("appimage", plan_target)
+    work = tmp_path / "updates"
+    assert not updater.is_staged(release, plan, work)
+    staged = updater.prefetch(release, plan, work)
+    assert staged.read_bytes() == NEW and updater.is_staged(release, plan, work) and len(asset_hits(rel)) == 1
+    assert plan_target.read_bytes() == OLD                                  # скачивание ничего не заменяет
+    updater.prefetch(release, plan, work)                                   # повтор — без нового скачивания
+    updater.install(release, plan, work)
+    assert plan_target.read_bytes() == NEW and len(asset_hits(rel)) == 1 and not list(work.glob("update-*"))
+
+
+def test_tampered_staged_file_is_not_trusted(rel, tmp_path):
+    release = release_of(rel)
+    target = tmp_path / "App.AppImage"
+    target.write_bytes(OLD)
+    plan = updater.Plan("appimage", target)
+    work = tmp_path / "updates"
+    staged = updater.prefetch(release, plan, work)
+    staged.write_bytes(NEW + b"x")                                          # файл испортили, пока приложение работало
+    assert not updater.is_staged(release, plan, work)
+    updater.install(release, plan, work)                                    # скачивается заново, проверяется
+    assert target.read_bytes() == NEW and len(asset_hits(rel)) == 2
+
+
+def test_old_staged_versions_are_cleaned(rel, tmp_path):
+    release = release_of(rel)
+    target = tmp_path / "App.AppImage"
+    target.write_bytes(OLD)
+    work = tmp_path / "updates"
+    work.mkdir()
+    (work / "update-1.0.0-YaklassSolver-x86_64.AppImage").write_bytes(b"old")
+    (work / "update-1.0.0-YaklassSolver-x86_64.AppImage.part").write_bytes(b"part")
+    updater.prefetch(release, updater.Plan("appimage", target), work)
+    assert sorted(p.name for p in work.glob("update-*") if not p.name.endswith(".sha256")) == \
+        ["update-9.9.9-YaklassSolver-x86_64.AppImage"]
+
+
+def test_agent_downloads_in_background_and_reports_ready(agent, rel):
+    from .conftest import wait_for
+    agent.check_updates()
+    assert wait_for(lambda: agent.update_ready, 10)
+    names = [n for n, _ in agent.events]
+    assert "update_ready" in names and [p for n, p in agent.events if n == "update_progress"][-1]["background"] is True
+    assert agent.update_plan.target.read_bytes() == OLD                     # без кнопки ничего не заменено
+    agent.install_update()
+    assert agent.update_plan.target.read_bytes() == NEW and len(asset_hits(rel)) == 1
+
+
+def test_agent_does_not_download_when_disabled(agent, rel):
+    s = agent.store.load()
+    s.auto_download_updates = False
+    agent.store.save(s)
+    agent.check_updates()
+    ev = [p for n, p in agent.events if n == "update_available"][0]
+    assert ev["prefetch"] is False and ev["ready"] is False
+    import time
+    time.sleep(0.5)
+    assert asset_hits(rel) == [] and not agent.update_ready
+
+
+def test_after_restart_a_downloaded_update_is_ready_immediately(agent, rel):
+    from .conftest import wait_for
+    agent.check_updates()
+    assert wait_for(lambda: agent.update_ready, 10)
+    agent.events.clear()
+    agent.update_ready = False
+    agent.check_updates()                                                   # как после перезапуска приложения
+    ev = [p for n, p in agent.events if n == "update_available"][0]
+    assert ev["ready"] is True and ev["prefetch"] is False and len(asset_hits(rel)) == 1

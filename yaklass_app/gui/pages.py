@@ -4,11 +4,12 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-                               QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                               QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from yaklass_bot.stealth import GRADE_BANDS, RunStyle
 
+from ..history import fmt_duration, fmt_points
 from ..settings import AppSettings
 from .widgets import (Card, NumField, OptionCard, Pill, SettingRow, Toggle, divider, form_row, icon_label, label, row,
                       section, set_icon)
@@ -139,6 +140,7 @@ class HomePage(Page):
         self.btn_upd_install = _btn("Обновить сейчас", "primary")
         self.btn_upd_install.clicked.connect(self.install_update_requested.emit)
         self.upd_progress = QProgressBar()
+        self.upd_progress.setTextVisible(False)          # сколько скачано — в тексте выше и на кнопке
         self.upd_progress.hide()
         self.btn_upd_open = _btn("Что нового")
         self.btn_upd_hide = _btn("Скрыть", "ghost")
@@ -241,14 +243,22 @@ class HomePage(Page):
             self.btn_link.setEnabled(False)
             self.link_requested.emit(c)
 
-    def show_update(self, version: str, current: str, notes: str, url: str, can_install: bool = False):
-        self._upd_url = url
+    def show_update(self, version: str, current: str, notes: str, url: str, can_install: bool = False,
+                    ready: bool = False, prefetch: bool = False):
+        self._upd_url, self._upd_version = url, version
         self.btn_upd_install.setVisible(can_install)
         self.btn_upd_install.setEnabled(True)
+        self.btn_upd_install.setText("Установить и перезапустить" if ready else "Обновить сейчас")
         self.upd_progress.hide()
-        self.upd_text.setText(f"Версия {version} (у вас {current}). " + (
-            "Приложение скачает её, проверит контрольную сумму и перезапустится." if can_install else
-            "Скачайте сборку на странице релиза и замените файл приложения."))
+        if ready:
+            text = ("Файл уже скачан и проверен. Установка займёт несколько секунд, приложение перезапустится.")
+        elif can_install and prefetch:
+            text = "Скачиваю обновление в фоне — после этого оно установится за несколько секунд."
+        elif can_install:
+            text = "Приложение скачает её, проверит контрольную сумму и перезапустится."
+        else:
+            text = "Скачайте сборку на странице релиза и замените файл приложения."
+        self.upd_text.setText(f"Версия {version} (у вас {current}). {text}")
         short = release_notes_text(notes)
         self.upd_notes.setText(short)
         self.upd_notes.setVisible(bool(short))
@@ -265,13 +275,24 @@ class HomePage(Page):
     def hide_chromium_install(self):
         self.chrome_card.hide()
 
-    def set_update_progress(self, done: int, total: int):
+    def set_update_progress(self, done: int, total: int, background: bool = False):
+        mb = f"{done // 1024 // 1024} из {max(total, 1) // 1024 // 1024} МБ"
         self.upd_progress.show()
         self.upd_progress.setRange(0, max(total, 1))
         self.upd_progress.setValue(done)
-        self.upd_progress.setFormat(f"{done // 1024 // 1024} из {max(total, 1) // 1024 // 1024} МБ")
+        self.upd_progress.setFormat(mb)
+        if background:                      # фоновая загрузка: кнопка остаётся доступной (дождётся конца загрузки)
+            self.upd_text.setText(f"Версия {getattr(self, '_upd_version', '')}: скачиваю в фоне — {mb}.")
+            return
         self.btn_upd_install.setEnabled(False)
-        self.btn_upd_install.setText(f"Скачиваю… {done // 1024 // 1024} из {max(total, 1) // 1024 // 1024} МБ")
+        self.btn_upd_install.setText(f"Скачиваю… {mb}")
+
+    def set_update_ready(self, version: str):
+        self.upd_progress.hide()
+        self.btn_upd_install.setText("Установить и перезапустить")
+        self.btn_upd_install.setEnabled(True)
+        self.upd_text.setText(f"Версия {version} скачана и проверена. Установка займёт несколько секунд, "
+                              "приложение перезапустится.")
 
     def set_linked(self, linked: bool, username: str = "", connected: bool = False, note: str = ""):
         self.btn_link.setEnabled(True)
@@ -626,6 +647,7 @@ class SettingsPage(Page):
         self.auto_poll = Toggle()
         self.poll = _num(5, 1440, 60, 0)
         self.check_updates = Toggle()
+        self.auto_download = Toggle()
         self.btn_check_updates = _btn("Проверить обновления", icon="refresh")
         self.btn_check_updates.clicked.connect(self.check_updates_requested.emit)
         self.update_msg = label("", "hint")
@@ -642,7 +664,9 @@ class SettingsPage(Page):
                        "из Telegram."),
             SettingRow("Период поиска", self.poll, "Проверять работы раз в … минут"),
             SettingRow("Тема", self.theme, control_width=180),
-            SettingRow("Узнавать о новых версиях", self.check_updates, "При запуске; ничего не скачивается без вас."),
+            SettingRow("Узнавать о новых версиях", self.check_updates, "Приложение само проверяет, вышла ли новая версия."),
+            SettingRow("Скачивать обновления в фоне", self.auto_download,
+                       "Новая версия скачивается и проверяется заранее; устанавливается только по вашей кнопке."),
             upd))
         col.addStretch(1)
         self.err = label("", "muted")
@@ -690,6 +714,7 @@ class SettingsPage(Page):
         self.poll.setValue(s.poll_minutes)
         self._set_combo(self.theme, s.theme)
         self.check_updates.setChecked(s.check_updates)
+        self.auto_download.setChecked(s.auto_download_updates)
         self._toggle_own()
         self._toggle_cookie()
         self.err.setText("")
@@ -716,6 +741,7 @@ class SettingsPage(Page):
         s.poll_minutes = self.poll.value()
         s.theme = self.theme.currentData()
         s.check_updates = self.check_updates.isChecked()
+        s.auto_download_updates = self.auto_download.isChecked()
         return s
 
     def _save(self):
@@ -754,5 +780,96 @@ class LogPage(Page):
             self.view.appendPlainText(f"{time.strftime('%H:%M:%S')}  {line}" if line.strip() else "")
 
 
-__all__ = ["HomePage", "WorksPage", "SettingsPage", "LogPage", "RunDialog", "WorkCard", "release_notes_text",
+# ============================================================ История
+class HistoryRow(QFrame):
+    """Один запуск работы: название, когда и как выполнялась, результат справа."""
+
+    def __init__(self, e: dict):
+        super().__init__()
+        self.setObjectName("historyRow")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(16)
+        info = QVBoxLayout()
+        info.setSpacing(5)
+        title = str(e.get("title") or "") or f"Работа {e.get('work_id', '')}"
+        info.addWidget(label(title, "workTitle", wrap=True))
+        when = time.strftime("%d.%m.%Y %H:%M", time.localtime(e.get("ts", 0)))
+        bits = [when]
+        if e.get("elapsed_s") is not None:
+            bits.append(fmt_duration(e["elapsed_s"]))
+        if e.get("style_label"):
+            bits.append(str(e["style_label"]))
+        info.addWidget(label("  ·  ".join(b for b in bits if b), "hint", wrap=False))
+        problems = e.get("problems") or []
+        if problems:
+            short = "; ".join(f"№{p.get('position')}: {p.get('status')}" for p in problems[:4])
+            more = f" и ещё {len(problems) - 4}" if len(problems) > 4 else ""
+            hint = label(f"Не выполнено: {short}{more}", "hint", wrap=True)
+            hint.setToolTip("\n".join(f"№{p.get('position')} — {p.get('status')}: {p.get('note', '')}" for p in problems))
+            info.addWidget(hint)
+        if e.get("note") and not e.get("completed") and e.get("mode") == "auto":
+            info.addWidget(label(str(e["note"]), "hint", wrap=True))
+        lay.addLayout(info, 1)
+        right = QVBoxLayout()
+        right.setSpacing(4)
+        right.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        if e.get("percent") is not None and e.get("total"):
+            big = label(f"{round(e['percent'])}%", "bigPercent", wrap=False)
+            big.setAlignment(Qt.AlignRight)
+            right.addWidget(big)
+            pts = label(f"{fmt_points(e.get('earned'))}/{fmt_points(e.get('total'))} баллов", "hint", wrap=False)
+            pts.setAlignment(Qt.AlignRight)
+            right.addWidget(pts)
+        elif e.get("est_percent") is not None and e.get("completed"):
+            right.addWidget(label(f"~{round(e['est_percent'])}%", "bigPercent", wrap=False))
+        status = ("Без отправки" if e.get("mode") == "dry" else
+                  "Остановлена" if e.get("stopped") else
+                  "Завершена" if e.get("completed") else "Не завершена")
+        tone = "" if e.get("mode") == "dry" else ("ok" if e.get("completed") else "warn")
+        pill = Pill(status, tone)
+        right.addWidget(pill, 0, Qt.AlignRight)
+        lay.addLayout(right)
+
+
+class HistoryPage(Page):
+    clear_requested = Signal()
+
+    def __init__(self):
+        super().__init__("История", "Выполненные работы на этом компьютере")
+        self.count = label("", "muted")
+        self.btn_clear = _btn("Очистить", "ghost", icon="trash")
+        self.btn_clear.clicked.connect(self._clear)
+        self.content.addLayout(row(self.count, self.btn_clear, fill=self.count))
+        self.list_host = QWidget()
+        self.list = QVBoxLayout(self.list_host)
+        self.list.setContentsMargins(0, 0, 0, 0)
+        self.list.setSpacing(10)
+        self.empty = label("Здесь появятся результаты: название работы, время, процент и баллы.", "empty")
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.list.addWidget(self.empty)
+        self.list.addStretch(1)
+        self.content.addWidget(self.list_host, 1)
+
+    def set_items(self, items: list[dict]) -> None:
+        while self.list.count() > 2:
+            w = self.list.takeAt(1).widget()
+            if w:
+                w.deleteLater()
+        for i, e in enumerate(items):
+            self.list.insertWidget(1 + i, HistoryRow(e))
+        self.empty.setVisible(not items)
+        self.btn_clear.setVisible(bool(items))
+        done = [e for e in items if e.get("percent") is not None]
+        avg = f", средний результат {round(sum(e['percent'] for e in done) / len(done))}%" if done else ""
+        self.count.setText(f"Запусков: {len(items)}{avg}" if items else "")
+
+    def _clear(self) -> None:
+        if QMessageBox.question(self, "Очистить историю?", "Записи о выполненных работах будут удалены с этого "
+                                "компьютера. Продолжить?", QMessageBox.Yes | QMessageBox.No,
+                                QMessageBox.No) == QMessageBox.Yes:
+            self.clear_requested.emit()
+
+
+__all__ = ["HomePage", "WorksPage", "HistoryPage", "SettingsPage", "LogPage", "RunDialog", "WorkCard", "release_notes_text",
            "greeting", "form_row", "icon_label"]

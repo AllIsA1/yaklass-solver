@@ -240,15 +240,74 @@ def restart(target: Path, mode: str) -> None:
     os._exit(0)
 
 
-def install(release: Release, plan: Plan, workdir: Path, token: str | None = None, session=requests,
-            progress: Callable[[int, int], None] | None = None) -> Path:
-    """Скачать, проверить и заменить файл приложения. Перезапуск — отдельным вызовом restart(), когда всё остальное закрыто."""
+# ---------------------------------------------------------------- фоновая загрузка
+def staged_path(workdir: Path, release: Release, asset: dict) -> Path:
+    return workdir / f"update-{release.version}-{asset['name']}"
+
+
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sidecar(path: Path) -> Path:
+    return path.with_name(path.name + ".sha256")
+
+
+def verify_staged(path: Path) -> bool:
+    """Заранее скачанный файл на месте и совпадает с контрольной суммой, записанной при скачивании
+    (защита от подмены/порчи файла, пока приложение работало)."""
+    try:
+        return path.is_file() and _file_sha256(path) == _sidecar(path).read_text(encoding="ascii").strip()
+    except OSError:
+        return False
+
+
+def cleanup_staged(workdir: Path, keep: Path | None = None) -> None:
+    """Удаляет скачанные ранее файлы обновлений других версий (и недокачанные *.part)."""
+    for f in workdir.glob("update-*"):
+        if keep is not None and f.name in (keep.name, _sidecar(keep).name):
+            continue
+        f.unlink(missing_ok=True)
+
+
+def prefetch(release: Release, plan: Plan, workdir: Path, token: str | None = None, session=requests,
+             progress: Callable[[int, int], None] | None = None) -> Path:
+    """Скачать и проверить файл обновления заранее (ничего не заменяя). Уже скачанный проверенный файл не трогает."""
     if plan.mode == "none" or plan.target is None:
         raise UpdateError(plan.reason or "Самообновление недоступно для этого способа запуска.")
     asset = pick_asset(release, plan.mode)
     if asset is None:
         raise UpdateError("В релизе нет файла для вашей системы.")
-    new = download(asset, release, workdir / f"update-{release.version}-{asset['name']}", token, session, progress)
+    dest = staged_path(workdir, release, asset)
+    if verify_staged(dest):
+        return dest
+    workdir.mkdir(parents=True, exist_ok=True)
+    cleanup_staged(workdir)
+    download(asset, release, dest, token, session, progress)
+    _sidecar(dest).write_text(_file_sha256(dest), encoding="ascii")
+    return dest
+
+
+def is_staged(release: Release, plan: Plan, workdir: Path) -> bool:
+    asset = pick_asset(release, plan.mode) if plan.mode != "none" else None
+    return asset is not None and verify_staged(staged_path(workdir, release, asset))
+
+
+def install(release: Release, plan: Plan, workdir: Path, token: str | None = None, session=requests,
+            progress: Callable[[int, int], None] | None = None) -> Path:
+    """Заменить файл приложения (скачав и проверив его, если он не был скачан заранее). Перезапуск — отдельным
+    вызовом restart(), когда всё остальное закрыто."""
+    if plan.mode == "none" or plan.target is None:
+        raise UpdateError(plan.reason or "Самообновление недоступно для этого способа запуска.")
+    asset = pick_asset(release, plan.mode)
+    if asset is None:
+        raise UpdateError("В релизе нет файла для вашей системы.")
+    dest = staged_path(workdir, release, asset)
+    new = dest if verify_staged(dest) else download(asset, release, dest, token, session, progress)
     try:
         if plan.mode == "appimage":
             apply_appimage(new, plan.target)
@@ -256,4 +315,5 @@ def install(release: Release, plan: Plan, workdir: Path, token: str | None = Non
             apply_exe(new, plan.target)
     finally:
         new.unlink(missing_ok=True)
+        _sidecar(new).unlink(missing_ok=True)
     return plan.target

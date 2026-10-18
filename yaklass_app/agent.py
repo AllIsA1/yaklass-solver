@@ -22,6 +22,7 @@ from yaklass_bot.storage import works_table
 
 from . import __version__, solvers, updater
 from .backend import Backend, BackendError, NotLoggedIn, friendly_error
+from .history import History
 from .settings import Store, data_dir
 
 Emit = Callable[[str, dict], None]
@@ -75,6 +76,9 @@ class Agent:
         self.update_api = updater.API          # адрес API релизов (в тестах подменяется)
         self.update_plan = updater.detect_plan()   # как это приложение можно обновить (AppImage / exe / только вручную)
         self.release = None                    # последний найденный более новый релиз
+        self.history = History(self.dir)       # история запусков (history.json)
+        self.update_ready = False              # файл обновления уже скачан и проверен
+        self._prefetch_thread: threading.Thread | None = None
         self.restart_fn = updater.restart      # в тестах подменяется
         self._blocked_until = 0.0              # сайт отклонил запросы: до этого времени автоматических опросов нет
         self._block_reported = False
@@ -310,17 +314,52 @@ class Agent:
             return
         if newer:
             self.release = rel
+            can = self.update_plan.mode != "none" and updater.pick_asset(rel, self.update_plan.mode) is not None
+            ready = can and updater.is_staged(rel, self.update_plan, self.dir / "updates")
+            self.update_ready = ready
+            fetch = bool(can and not ready and s.auto_download_updates)
             self.emit("update_available", version=rel.version, current=__version__, notes=rel.notes, url=rel.url,
-                      can_install=self.update_plan.mode != "none" and updater.pick_asset(rel, self.update_plan.mode) is not None)
+                      can_install=can, ready=ready, prefetch=fetch)
+            if fetch:
+                self._start_prefetch(rel)
         elif manual:
             self.emit("update_status", ok=True, message=f"У вас последняя версия ({__version__}).")
 
+    def _start_prefetch(self, rel) -> None:
+        """Скачивание обновления в фоне (когда нет выполнения работы, чтобы не занимать канал). Ставится по кнопке."""
+        t = self._prefetch_thread
+        if t is not None and t.is_alive():
+            return
+
+        def job():
+            try:
+                while self.state != "idle":                       # не мешаем выполняющейся работе
+                    if self._stop.wait(20):
+                        return
+                updater.prefetch(rel, self.update_plan, self.dir / "updates", updater.update_token(),
+                                 progress=lambda done, total: self.emit("update_progress", done=done, total=total,
+                                                                         background=True))
+                self.update_ready = True
+                self.emit("update_ready", version=rel.version)
+                self.log(f"Обновление {rel.version} скачано и проверено — установится по кнопке «Обновить»")
+            except updater.UpdateError as e:
+                self.log(f"Не удалось скачать обновление в фоне: {e}")
+            except Exception as e:  # noqa: BLE001
+                self.log(f"Не удалось скачать обновление в фоне: {e.__class__.__name__}")
+
+        self._prefetch_thread = threading.Thread(target=job, daemon=True, name="update-prefetch")
+        self._prefetch_thread.start()
+
     def install_update(self) -> None:
-        """Скачать и заменить файл приложения, закрыть всё и перезапуститься. Бросает UpdateError с понятной причиной."""
+        """Заменить файл приложения (если обновление не скачано заранее — сначала скачать), закрыть всё и
+        перезапуститься. Бросает UpdateError с понятной причиной."""
         if self.state != "idle":
             raise updater.UpdateError("Идёт выполнение работы: обновитесь после её окончания.")
         if self.release is None:
             raise updater.UpdateError("Сначала проверьте обновления.")
+        t = self._prefetch_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=600)                                   # докачиваем уже идущую загрузку, а не начинаем вторую
         plan = self.update_plan
         updater.install(self.release, plan, self.dir / "updates", updater.update_token(),
                         progress=lambda done, total: self.emit("update_progress", done=done, total=total))
@@ -374,6 +413,10 @@ class Agent:
             self.emit("progress", work_id=work_id, done=done, total=total, note=note)
             self._send({"type": "progress", "work_id": work_id, "done": done, "total": total, "note": note})
 
+        started = time.time()
+        base_entry = {"work_id": work_id, "title": self.work_title(work_id), "mode": mode,
+                      "style": style.kind, "style_label": style.label() if mode == "auto" else "без отправки"}
+
         try:
             res = self.backend.run_work(work_id, mode, lambda task, lg: solver.solve(task, lg), pace, control,
                                         self.log, on_progress, style=style)
@@ -383,16 +426,32 @@ class Agent:
                        "note": res.note, "stopped": res.stopped, "fatal": res.fatal, "est_percent": res.est_percent,
                        "earned": res.earned, "total": res.total, "percent": res.percent}
             self.emit("finished", **payload)
+            self._record_history({**base_entry, "title": title, "elapsed_s": int(time.time() - started),
+                                  "completed": bool(res.completed), "stopped": bool(res.stopped), "fatal": res.fatal,
+                                  "percent": res.percent, "earned": res.earned, "total": res.total,
+                                  "est_percent": res.est_percent, "summary": summary, "note": res.note,
+                                  "problems": [{"position": o.position, "status": STATUS_NAMES.get(o.status, o.status),
+                                                "note": o.note[:200]} for o in res.pending][:20]})
             extra = {k: payload[k] for k in ("est_percent", "earned", "total", "percent") if payload[k] is not None}
             self._send({"type": "finished", **{k: payload[k] for k in ("work_id", "title", "completed", "summary",
                                                                        "note")}, **extra})
         except Exception as e:  # noqa: BLE001
             self.log(f"Ошибка выполнения: {e}")
+            self._record_history({**base_entry, "elapsed_s": int(time.time() - started), "completed": False,
+                                  "stopped": False, "fatal": "", "percent": None, "earned": None, "total": None,
+                                  "summary": {}, "note": f"Ошибка: {e}"[:300], "problems": []})
             self.emit("error", message=str(e))
             self._send({"type": "error", "message": f"Ошибка выполнения: {e}"[:300]})
         finally:
             self._control = None
             self._set_state("idle")
+
+    def _record_history(self, entry: dict) -> None:
+        try:
+            self.history.add(entry)
+            self.emit("history")
+        except Exception as e:  # noqa: BLE001 — история не должна ломать выполнение работы
+            logging.getLogger("yaklass").warning("не удалось записать историю: %s", e)
 
     def pause(self) -> None:
         if self._control and self.state == "running":

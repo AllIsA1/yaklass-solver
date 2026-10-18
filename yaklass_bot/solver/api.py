@@ -8,8 +8,11 @@ from collections.abc import Sequence
 
 import requests
 
-from .base import Provider, SolveError
+from .base import Provider, ProviderUnavailable, SolveError
 from .images import Image
+
+
+REQUEST_ERRORS = (400, 413, 422)      # дело в самом запросе, а не в доступности модели: запасная модель не поможет
 
 
 class ApiProvider(Provider):
@@ -44,9 +47,13 @@ class ApiProvider(Provider):
                 "messages": [{"role": "user", "content": content}]}
         if self.json_mode:
             body["response_format"] = {"type": "json_object"}
-        r = requests.post(self.url, headers=headers, timeout=180, json=body)
+        try:
+            r = requests.post(self.url, headers=headers, timeout=180, json=body)
+        except requests.RequestException as e:
+            raise ProviderUnavailable(f"API недоступен ({e.__class__.__name__})") from e
         if r.status_code != 200:
-            raise SolveError(f"API {r.status_code}: {r.text[:300]}")
+            cls = SolveError if r.status_code in REQUEST_ERRORS else ProviderUnavailable
+            raise cls(f"API {r.status_code}: {r.text[:300]}")
         data = r.json()
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}

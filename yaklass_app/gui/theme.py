@@ -29,6 +29,7 @@ ICONS = {
     "settings": '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/>'
                 '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
     "log": '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4"/>',
+    "history": '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     "refresh": '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/>',
     "play": '<path d="M8 5.5v13l10.5-6.5z" fill="CLR"/>',
     "moon": '<path d="M19.5 14.6A7.6 7.6 0 0 1 9.4 4.5a7.6 7.6 0 1 0 10.1 10.1z"/>',
@@ -113,6 +114,8 @@ QFrame#card {{ background: {c['surface']}; border: 1px solid {c['border']}; bord
 QFrame#banner {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; border-radius: 14px; }}
 QFrame#workRow {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 12px; }}
 QFrame#workRow:hover {{ border-color: {c['border2']}; }}
+QFrame#historyRow {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 12px; }}
+#bigPercent {{ font-family: {SERIF}; font-size: 24px; font-weight: 600; }}
 QFrame#divider {{ background: {c['border']}; max-height: 1px; min-height: 1px; border: none; }}
 #cardTitle {{ font-size: 14px; font-weight: 600; }}
 #rowTitle {{ font-size: 13px; }}

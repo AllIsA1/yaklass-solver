@@ -56,7 +56,7 @@ def ui(qapp, tmp_path):
 
 
 def test_navigation_between_pages(ui):
-    for i in range(4):
+    for i in range(5):
         ui.win.nav.button(i).click()
         assert ui.win.stack.currentIndex() == i
 
@@ -187,7 +187,7 @@ def test_short_status_texts_stay_on_one_line(ui):
     ui.win.works.set_works([])
     ui.win.works.set_message("Новых работ нет или нужен вход в ЯКласс")
     one_line(ui.win.works.status)
-    ui.win.nav.button(2).click()
+    ui.win.nav.button(3).click()
     ui.win.settings.update_msg.setText("✓ Вы используете последнюю версию (0.1.3)")
     one_line(ui.win.settings.update_msg)
 
@@ -274,7 +274,7 @@ def test_both_themes_render(ui, theme):
 def test_numeric_fields_show_values_inside_the_box(ui):
     """Регрессия: число отображалось слева за границей поля (QSpinBox + стили)."""
     p = ui.win.settings
-    ui.win.nav.button(2).click()
+    ui.win.nav.button(3).click()
     ui.app.processEvents()
     for f, txt in ((p.p_between[0], "1"), (p.p_between[1], "3"), (p.p_submit[0], "0.5"), (p.p_field[0], "0.25"),
                    (p.p_type[0], "40"), (p.poll, "60")):

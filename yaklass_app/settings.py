@@ -50,7 +50,8 @@ class AppSettings:
     auto_poll: bool = False                   # сам проверять новые работы (открывает окно браузера на несколько секунд)
     poll_minutes: int = 60
     theme: str = "dark"                       # dark | light
-    check_updates: bool = True                # узнавать о новых версиях (только уведомление, ничего не скачивается)
+    check_updates: bool = True                # узнавать о новых версиях
+    auto_download_updates: bool = True        # скачивать найденное обновление в фоне (ставится только по кнопке)
     update_repo: str = "AllIsA1/yaklass-solver"
     base_url: str = "https://www.yaklass.ru"
 

@@ -13,6 +13,7 @@ from yaklass_bot.solver.base import SolveError
 
 from . import security
 from .db import Db, User
+from .fallback import FallbackProvider
 from .hub import Hub
 from .schemas import LinkRequest, LinkResponse, MeResponse, SolveRequest, SolveResponse
 from .settings import Settings
@@ -63,7 +64,10 @@ def create_app(settings: Settings, db: Db, hub: Hub, solver: SolverService) -> F
 
     @app.get("/healthz")
     async def healthz():
-        return {"ok": True, "agents_online": hub.online_count()}
+        fb = solver.provider if isinstance(solver.provider, FallbackProvider) else None
+        return {"ok": True, "agents_online": hub.online_count(),
+                **({"fallback": {"primary_down": fb.primary_down, "switches": fb.switches,
+                                 "fallback_calls": fb.fallback_calls}} if fb else {})}
 
     @app.post("/v1/link", response_model=LinkResponse)
     async def link(req: LinkRequest, request: Request):

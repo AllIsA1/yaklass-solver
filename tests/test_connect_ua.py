@@ -8,24 +8,33 @@ from yaklass_bot.useragent import build_user_agent, supports
 
 def test_roundtrip_and_formats():
     s = make_connection_code("https://Solver.Example.com/some/path", "abcd-efgh")
-    assert s.startswith("yk1.") and "solver.example.com" not in s            # адрес не виден в строке
+    assert s == "solver.example.com:abcd-efgh"                                # формат «домен:код»
     assert parse_connection_code(s) == ("https://solver.example.com", "ABCD-EFGH")
     assert parse_connection_code(f"  `{s}`\n") == ("https://solver.example.com", "ABCD-EFGH")   # пробелы, кавычки
-    assert parse_connection_code(s[:6] + "\n" + s[6:]) == ("https://solver.example.com", "ABCD-EFGH")
-    assert parse_connection_code("abcdefgh") == (None, "ABCD-EFGH")           # старый формат: только код
+    assert parse_connection_code("solver.example.com:ABCDEFGH") == ("https://solver.example.com", "ABCD-EFGH")
+    assert parse_connection_code("https://solver.example.com:ABCD-EFGH")[0] == "https://solver.example.com"
+    assert parse_connection_code("solver.example.com:8443:ABCD-EFGH")[0] == "https://solver.example.com:8443"
+    assert parse_connection_code("abcdefgh") == (None, "ABCD-EFGH")           # только код: адрес уже сохранён
     assert parse_connection_code("ABCD-EFGH") == (None, "ABCD-EFGH")
+    local = make_connection_code("http://127.0.0.1:8080", "ABCD-EFGH")
+    assert local == "127.0.0.1:8080:ABCD-EFGH" and parse_connection_code(local)[0] == "http://127.0.0.1:8080"
+    assert parse_connection_code("localhost:ABCD-EFGH")[0] == "http://localhost"
+
+
+def test_old_yk1_format_still_works():
+    import base64
+    old = "yk1." + base64.urlsafe_b64encode(b"https://solver.example.com").decode().rstrip("=") + ".ABCD-EFGH"
+    assert parse_connection_code(old) == ("https://solver.example.com", "ABCD-EFGH")
 
 
 def test_bad_codes_are_rejected():
-    for bad in ["", "yk1.", "yk1.!!!.ABCD-EFGH", "yk1.aHR0cHM6Ly94LmNvbQ.12", "ABCD", "https://x.com",
-                make_connection_code("https://a.example.com", "ABCD-EFGH")[:-3]]:
+    for bad in ["", "yk1.", "yk1.!!!.ABCD-EFGH", "ABCD", "https://x.com", "solver.example.com:12",
+                "solver.example.com:ABCD-EFG", "exa_mple.com:ABCD-EFGH",
+                "solver.example.com/path:ABCD-EFGH", "user@solver.example.com:ABCD-EFGH"]:
         with pytest.raises(ConnectionCodeError):
             parse_connection_code(bad)
-    import base64
-    plain_http = "yk1." + base64.urlsafe_b64encode(b"http://evil.example.com").decode().rstrip("=") + ".ABCD-EFGH"
     with pytest.raises(ConnectionCodeError, match="https"):                   # без шифрования — только локально
-        parse_connection_code(plain_http)
-    assert parse_connection_code(make_connection_code("http://127.0.0.1:8080", "ABCD-EFGH"))[0] == "http://127.0.0.1:8080"
+        parse_connection_code("http://evil.example.com:ABCD-EFGH")
     assert normalize_server_url("https://a.example.com:8443/x?y") == "https://a.example.com:8443"
 
 

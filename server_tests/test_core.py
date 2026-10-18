@@ -97,8 +97,9 @@ def test_link_message_gives_single_connection_code():
     c = core()
     c.s.domain = "solver.example.com"
     msg = c.link_message("ABCD-EFGH", 10)
-    assert "solver.example.com" not in msg and "Адрес сервера" not in msg      # адрес пользователю не показываем
+    assert "Адрес сервера" not in msg                                         # отдельного поля с адресом нет
     code = re.search(r"<code>(.*?)</code>", msg).group(1)
+    assert code == "solver.example.com:ABCD-EFGH"                             # «домен:код»
     assert parse_connection_code(code) == ("https://solver.example.com", "ABCD-EFGH")
     assert msg.index("Код подключения") < msg.index("10 мин") < msg.index("Никому не передавайте")
 
