@@ -294,7 +294,9 @@ class PlaywrightBackend(Backend):
             except Exception as e:  # noqa: BLE001 — браузер не найден, БД кук заблокирована, шифрование...
                 raise BackendError(f"Не удалось прочитать куки из {s.cookie_browser}: {e}") from e
             if not cookies:
-                raise NotLoggedIn(f"В {s.cookie_browser} нет входа в ЯКласс: войдите на сайте в этом браузере")
+                hint = (" Не закрывайте Firefox, пока приложение не прочитает вход: сессионные куки хранятся только "
+                        "в сессии браузера." if s.cookie_browser in ("firefox", "librewolf") else "")
+                raise NotLoggedIn(f"В {s.cookie_browser} нет входа в ЯКласс: войдите на сайте в этом браузере.{hint}")
         pw = self._playwright()
         if s.browser_mode == "profile":
             profile = self.dir / "profile"

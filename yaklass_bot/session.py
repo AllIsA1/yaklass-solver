@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import http.cookiejar
+import shutil
+import sqlite3
+import tempfile
+from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
@@ -17,17 +21,74 @@ class AuthError(RuntimeError):
     pass
 
 
+FIREFOX_FAMILY = {"firefox": "Firefox", "librewolf": "LibreWolf"}
+
+
+def snapshot_firefox_profile(cookie_file: str | Path, dest: Path) -> Path:
+    """Снимок профиля Firefox для чтения кук. Firefox пишет свежие куки в журнал cookies.sqlite-wal, а простое
+    копирование cookies.sqlite их теряет (браузер открыт — недавний вход «не виден»). Поэтому копируем базу вместе с
+    журналом и вливаем его (checkpoint). Сессионные куки (без срока жизни) лежат только в файлах сессии:
+    recovery.jsonlz4 (браузер открыт) или previous.jsonlz4 (после закрытия) — берём, что есть. -> путь к снимку базы."""
+    src = Path(cookie_file)
+    prof = src.parent
+    dest.mkdir(parents=True, exist_ok=True)
+    out = dest / "cookies.sqlite"
+    shutil.copyfile(src, out)
+    for suffix in ("-wal", "-shm"):
+        side = prof / (src.name + suffix)
+        if side.is_file():
+            try:
+                shutil.copyfile(side, dest / ("cookies.sqlite" + suffix))
+            except OSError:
+                pass
+    try:
+        con = sqlite3.connect(out)
+        try:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            con.close()
+    except sqlite3.DatabaseError:
+        pass                                          # не получилось влить журнал — останется то, что в основном файле
+    backups = dest / "sessionstore-backups"
+    backups.mkdir(exist_ok=True)
+    sb = prof / "sessionstore-backups"
+    for name in ("recovery.jsonlz4", "previous.jsonlz4"):
+        if (sb / name).is_file():
+            try:
+                shutil.copyfile(sb / name, backups / "recovery.jsonlz4")    # под этим именем читает browser_cookie3
+                break
+            except OSError:
+                continue
+    if (prof / "sessionstore.js").is_file():
+        try:
+            shutil.copyfile(prof / "sessionstore.js", dest / "sessionstore.js")
+        except OSError:
+            pass
+    return out
+
+
 def load_cookies(browser: str, domain: str, cookie_file: str = "") -> http.cookiejar.CookieJar:
     """Читает куки домена из установленного браузера (chrome/firefox/edge/...)."""
     import browser_cookie3 as bc
 
-    loader = getattr(bc, browser.lower(), None)
-    if loader is None or browser.lower() in ("load", "all_browsers"):
+    name = browser.lower()
+    loader = getattr(bc, name, None)
+    if loader is None or name in ("load", "all_browsers"):
         raise ValueError(f"Неизвестный браузер: {browser}")
     kwargs = {"domain_name": domain}
     if cookie_file:
         kwargs["cookie_file"] = cookie_file
+    tmp: Path | None = None
     try:
+        if name in FIREFOX_FAMILY:
+            try:
+                src = cookie_file or getattr(bc, FIREFOX_FAMILY[name])().cookie_file      # профиль по умолчанию
+                tmp = Path(tempfile.mkdtemp(prefix="yk-ff-"))
+                kwargs["cookie_file"] = str(snapshot_firefox_profile(src, tmp))
+            except OSError:
+                kwargs.pop("cookie_file", None)
+                if cookie_file:
+                    kwargs["cookie_file"] = cookie_file          # снимок не вышел — читаем как раньше
         return loader(**kwargs)
     except Exception as e:  # браузер не найден, БД заблокирована, шифрование и т.п.
         raise AuthError(
@@ -35,6 +96,9 @@ def load_cookies(browser: str, domain: str, cookie_file: str = "") -> http.cooki
             "Закройте браузер и повторите (БД кук может быть заблокирована) "
             "или укажите cookie_file в config.toml."
         ) from e
+    finally:
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def make_session(cfg: Config) -> requests.Session:
