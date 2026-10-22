@@ -11,6 +11,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-22.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,7 +32,7 @@ jobs:
       - run: pip install -e ".[server,gui,dev]"
       - name: Тесты (без sample-страниц ЯКласса — они в репозиторий не входят)
         env: { QT_QPA_PLATFORM: offscreen }
-        run: pytest -q
+        run: pytest -q -o faulthandler_timeout=300      # при зависании теста — дамп стеков в журнал, а не молчание
 
   build-windows:
     needs: test

@@ -125,10 +125,16 @@ def test_chromium_offer_only_when_embedded_chromium_is_chosen_and_missing(ui, mo
 def test_start_is_blocked_until_chromium_is_installed(ui, monkeypatch):
     from yaklass_app.gui import main_window as mw
     w = ui.win
+    s = ui.store.load()
+    s.channel = ""                                       # по умолчанию на машине с Chrome канал «chrome» (в CI он есть)
+    ui.store.save(s)
+    warned = []
     monkeypatch.setattr(w, "can_prompt", lambda: True)
     monkeypatch.setattr(mw, "chromium_installed", lambda: False)
     monkeypatch.setattr(mw.QMessageBox, "exec", lambda self: 0)
+    monkeypatch.setattr(mw.QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a)))   # модальное окно зависло бы
     w.start_work("111", "auto")
+    assert not warned                                    # остановились на предложении установить Chromium
     assert not ui.backend.runs and ui.agent.state == "idle"
 
 
