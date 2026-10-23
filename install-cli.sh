@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Установка yaklass-bot на Linux / macOS.
 #   sh install-cli.sh                      # из папки проекта (рядом со скриптом)
-#   sh install-cli.sh yaklass_bot-0.1.0-py3-none-any.whl   # из готового wheel
+#   sh install-cli.sh /путь/к/папке/проекта                # из другой копии репозитория
 set -e
 SRC="${1:-$(cd "$(dirname "$0")" && pwd)}"
 TARGET="$SRC[browser]"      # extra «browser» = Playwright (режим run)

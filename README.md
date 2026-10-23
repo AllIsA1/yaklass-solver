@@ -42,6 +42,7 @@
 
 - Архитектура проекта - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Инструкция клиента - [docs/CLIENT.md](docs/CLIENT.md)
+- Расширение для браузера - [docs/EXTENSION.md](docs/EXTENSION.md)
 - Общение агента и сервера - [docs/PROTOCOL.md](docs/PROTOCOL.md)
 - Инструкция сервера - [docs/SERVER.md](docs/SERVER.md)
 - Гайд для тех, кто ничего не понял - [docs/USER_GUIDE.md](docs/USER_GUIDE.md)

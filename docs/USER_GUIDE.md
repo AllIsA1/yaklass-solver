@@ -28,7 +28,7 @@ Linux - `YaklassSolver-x86_64.AppImage`
 
 Python ≥3.11 (если готовая сборка не подходит)
 ```bash
-pip install "yaklass_bot-*-py3-none-any.whl[gui]"
+pip install ".[gui]"          # из клонированного репозитория; готовые сборки (EXE, AppImage) — на странице релизов
 yaklass-app
 ```
 

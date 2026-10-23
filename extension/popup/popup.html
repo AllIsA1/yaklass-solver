@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yaklass Solver</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../icons/icon48.png" width="28" height="28" alt="">
+    <div class="brand">Yaklass Solver</div>
+    <span id="conn" class="pill">…</span>
+  </header>
+  <div id="update" class="banner" hidden></div>
+  <nav>
+    <button data-tab="home" class="on">Главная</button>
+    <button data-tab="works">Работы</button>
+    <button data-tab="history">История</button>
+    <button data-tab="log">Журнал</button>
+  </nav>
+
+  <main>
+    <section id="tab-home">
+      <div id="link-box" class="card">
+        <h2>Привязка к Telegram</h2>
+        <p class="muted">Отправьте боту <b>/link</b> и вставьте код подключения целиком.</p>
+        <div class="row"><input id="code" placeholder="Код подключения из бота" autocomplete="off" spellcheck="false">
+          <button id="btn-link" class="primary">Привязать</button></div>
+        <p id="link-err" class="err" hidden></p>
+      </div>
+      <div id="linked-box" class="card" hidden>
+        <h2>Telegram <span id="who" class="muted"></span></h2>
+        <p class="muted" id="conn-note"></p>
+        <button id="btn-unlink" class="danger">Отвязать</button>
+      </div>
+      <div class="card">
+        <h2>Выполнение</h2>
+        <p id="run-text" class="muted">Выберите работу на вкладке «Работы» или запустите её командой из Telegram.</p>
+        <div id="bar-wrap" hidden><div class="bar"><div id="bar-fill"></div></div><span id="bar-label" class="muted"></span></div>
+        <div class="row">
+          <button id="btn-pause" hidden>Пауза</button>
+          <button id="btn-resume" class="primary" hidden>Продолжить</button>
+          <button id="btn-stop" class="danger" hidden>Стоп</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Вход в ЯКласс</h2>
+        <p class="muted">Расширение работает в этом браузере: войдите на yaklass.ru как обычно, пароль расширению не передаётся.</p>
+      </div>
+    </section>
+
+    <section id="tab-works" hidden>
+      <div class="row between"><span id="works-count" class="muted"></span><button id="btn-refresh">Обновить</button></div>
+      <div id="works"></div>
+      <p id="works-empty" class="muted center">Нажмите «Обновить»: расширение откроет список работ в фоновой вкладке.</p>
+    </section>
+
+    <section id="tab-history" hidden>
+      <div class="row between"><span id="history-count" class="muted"></span><button id="btn-clear" class="ghost">Очистить</button></div>
+      <div id="history"></div>
+      <p id="history-empty" class="muted center">Здесь появятся результаты: название, время, процент и баллы.</p>
+    </section>
+
+    <section id="tab-log" hidden>
+      <pre id="log"></pre>
+    </section>
+  </main>
+  <footer><span id="version" class="muted"></span></footer>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

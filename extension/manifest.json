@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Yaklass Solver",
+  "version": "2.0.0",
+  "description": "Выполняет проверочные работы ЯКласса в вашем браузере через сервер Yaklass Solver; управляется из Telegram.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "tabs", "alarms"],
+  "host_permissions": [
+    "https://www.yaklass.ru/*",
+    "https://yaklass.ru/*",
+    "https://api.github.com/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "src/background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.yaklass.ru/*", "https://yaklass.ru/*"],
+      "js": ["src/parser.js", "src/filler.js", "src/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.yaklass.ru/*", "https://yaklass.ru/*"],
+      "js": ["src/page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "action": {
+    "default_title": "Yaklass Solver",
+    "default_popup": "popup/popup.html",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

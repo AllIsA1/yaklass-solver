@@ -1,6 +1,6 @@
 # Установка yaklass-bot на Windows (PowerShell).
 #   powershell -ExecutionPolicy Bypass -File install-cli.ps1
-#   powershell -ExecutionPolicy Bypass -File install-cli.ps1 yaklass_bot-0.1.0-py3-none-any.whl
+#   powershell -ExecutionPolicy Bypass -File install-cli.ps1 C:\путь\к\папке\проекта
 param([string]$Src = $PSScriptRoot)
 $ErrorActionPreference = "Stop"
 $target = "$Src[browser]"
