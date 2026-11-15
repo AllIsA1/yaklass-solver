@@ -26,6 +26,8 @@ from .pace import Pace
 from .parser import (page_kind, parse_exercise, parse_nav, parse_overview, parse_preview, parse_result,
                      parse_work_title)
 from .pipeline import solve
+from .presence import Presence, current_call
+from .presence import install as install_presence
 from .runner import choose_work, handle_preview, resolve_url, wait_page_ready
 from .session import DEFAULT_UA, load_cookies, to_playwright_cookies
 from .solver import FatalSolveError, SolveError, make_provider
@@ -187,7 +189,7 @@ def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool 
         if not submit:
             return Outcome(**base, status="theory", note="без отправки — «Прочитано» не нажато")
         if stealth:
-            stealth.sleep(stealth.slice_for(task), control)        # «читает» теорию
+            stealth.sleep(stealth.theory_slice(task), control)     # «читает» теорию (быстрее, чем решает задания)
         else:
             pace.wait(pace.before_submit, control)
         ok, note = mark_theory_read(page, task.is_theory)
@@ -215,7 +217,7 @@ def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool 
             stealth.planner.commit(plan, None)
             return Outcome(**base, status="left", note="оставлено без ответа по плану скрытного режима")
     try:
-        answer = solve_fn(task, log)
+        answer = current_call(lambda: solve_fn(task, log))     # курсор «на задании», пока модель думает
     except FatalSolveError:
         raise
     except SolveError as e:
@@ -485,10 +487,25 @@ def execute(page, base_url: str, solve_fn: SolveFn, table, log: Log, *, resume: 
     """Проход по работе с первого задания до последнего и (при полном успехе) завершение.
     Страница `page` уже должна быть на первом/текущем задании."""
     res = RunResult()
+    with Presence(page):
+        return _execute(page, base_url, solve_fn, table, log, res, resume=resume, finish_anyway=finish_anyway,
+                        submit=submit, pace=pace, control=control, on_progress=on_progress,
+                        screenshot_dir=screenshot_dir, style=style, max_points=max_points, time_limit_s=time_limit_s)
+
+
+def _execute(page, base_url: str, solve_fn: SolveFn, table, log: Log, res: RunResult, *, resume: bool,
+             finish_anyway: bool, submit: bool, pace: Pace | None, control: RunControl | None,
+             on_progress, screenshot_dir: Path | None, style: RunStyle | None,
+             max_points: float | None, time_limit_s: float | None) -> RunResult:
     try:
         _work_loop(page, solve_fn, table, log, res.outcomes, resume=resume, submit=submit, pace=pace,
                    control=control, on_progress=on_progress, style=style, max_points=max_points,
                    time_limit_s=time_limit_s, result=res)
+        if res.stealth is not None and submit and not any(o.status == "timeout" for o in res.outcomes):
+            rest = res.stealth.review_s()
+            if rest >= 5:
+                log(f"\nСкрытный режим: проверка ответов перед завершением — {int(rest // 60)} мин {int(rest % 60)} с")
+                res.stealth.sleep(rest, control)
     except Stopped:
         res.stopped = True
         res.note = "остановлено пользователем"
@@ -551,6 +568,7 @@ def run_auto(cfg: Config, url: str, *, assume_yes: bool = False, finish_anyway: 
             ctx = browser.new_context(user_agent=cfg.run.get("user_agent")
                                       or build_user_agent(cfg.browser, getattr(browser, "version", "")) or DEFAULT_UA)
             ctx.add_cookies(to_playwright_cookies(load_cookies(cfg.browser, domain, cfg.cookie_file)))
+            install_presence(ctx)
             page = ctx.new_page()
             page.goto(start)
             page.wait_for_selector("#taskhtml, #test-preview, .wg-testworks", timeout=30_000)

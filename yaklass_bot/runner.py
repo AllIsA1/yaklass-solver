@@ -11,6 +11,7 @@ from .filler import fill_task
 from .parser import page_kind, parse_exercise, parse_preview, parse_works_list
 from .session import DEFAULT_UA, load_cookies, to_playwright_cookies
 from .pipeline import solve
+from .presence import install as install_presence
 from .solver import SolveError, make_provider
 
 POLL_S = 1.0
@@ -150,6 +151,7 @@ def run_dry(cfg: Config, url: str, auto_start: bool = True, start_delay: int = 5
             browser = pw.chromium.launch(headless=False, channel=channel)
             ctx = browser.new_context(user_agent=cfg.run.get("user_agent") or DEFAULT_UA)
             ctx.add_cookies(to_playwright_cookies(load_cookies(cfg.browser, domain, cfg.cookie_file)))
+            install_presence(ctx)
             page = ctx.new_page()
             page.goto(start)
             print("Тестовый режим: ответы выставляются, но не отправляются. Закройте окно браузера для выхода.")

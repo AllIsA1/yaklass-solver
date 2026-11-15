@@ -122,8 +122,16 @@
   };
 
   // выполняет ли расширение работу именно в этой вкладке (тогда окна подтверждения сайта принимаются само)
+  // Метка в sessionStorage вкладки нужна странице-хуку (world MAIN) уже на старте следующей страницы — до ответа отсюда.
   chrome.runtime.sendMessage({ content: "hello" }).then((r) => {
-    if (r && r.auto) document.documentElement.setAttribute("data-yk-auto", "1");
+    const auto = !!(r && r.auto);
+    let stale = false;
+    try {
+      stale = !auto && sessionStorage.getItem("__yk_auto") === "1";
+      if (auto) sessionStorage.setItem("__yk_auto", "1"); else sessionStorage.removeItem("__yk_auto");
+    } catch (e) { /* нет доступа к sessionStorage */ }
+    if (auto) document.documentElement.setAttribute("data-yk-auto", "1");
+    else if (stale) document.documentElement.setAttribute("data-yk-auto", "0");   // работа закончилась — снять подмену
   }).catch(() => {});
 
   chrome.runtime.onMessage.addListener((msg, _sender, send) => {

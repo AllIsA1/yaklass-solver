@@ -171,3 +171,49 @@ def test_unsupported_task_counts_in_total_but_not_earned():
     p = Planner(4, 10.0, random.Random(1))
     p.observe(task(1, 4.0))
     assert p.earned == 0 and p.seen == 4.0 and p.expected_percent == 0.0
+
+
+# ---------- теория в скрытом режиме ----------
+
+def theory(chars=2400, position=1):
+    return Task(position=position, title="Теория", points=None, text="а" * chars, fields=[], images=[], is_theory=True)
+
+
+def _walk(order, minutes=10.0, seed=0):
+    """Проходит работу по расписанию (виртуальные часы) -> [(вид, секунды)], остаток на проверку."""
+    now = [0.0]
+    st = stealth.Stealth(RunStyle("stealth", minutes, 4), positions=len(order), total_points=None, time_left_s=None,
+                         rng=random.Random(seed), clock=lambda: now[0])
+    spent = []
+    for i, t in enumerate(order):
+        st.begin(i)
+        s = st.slice_for(t)
+        now[0] += s
+        spent.append(("theory" if t.is_theory else "task", s))
+    return spent, st.review_s(), st
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_theory_is_faster_than_any_task(seed):
+    order = [theory(position=1), task(1, position=2), theory(position=3), task(1, position=4), task(2, position=5),
+             theory(3500, position=6)]                              # теория и в конце — раньше она забирала весь остаток
+    spent, _, _ = _walk(order, seed=seed)
+    th = [s for k, s in spent if k == "theory"]
+    ts = [s for k, s in spent if k == "task"]
+    assert max(th) < min(ts)
+    assert max(th) <= stealth.THEORY_S[1]
+
+
+def test_theory_time_grows_with_text_but_is_capped():
+    st = stealth.Stealth(RunStyle("stealth", 60.0, 4), positions=5, total_points=None, time_left_s=None,
+                         rng=random.Random(3), clock=lambda: 0.0)
+    st.begin(0)
+    short, long_ = st.theory_slice(theory(200)), st.theory_slice(theory(20000))
+    assert short < long_ <= stealth.THEORY_S[1]
+
+
+def test_time_saved_on_last_theory_goes_to_final_review():
+    spent, review, st = _walk([task(1, position=1), task(1, position=2), theory(position=3)], minutes=6)
+    assert spent[-1][1] <= stealth.THEORY_S[1]
+    used = sum(s for _, s in spent)
+    assert used + review >= 0.85 * (st.target_s - stealth.FINISH_RESERVE_S)    # работа всё равно займёт заданное время

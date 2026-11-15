@@ -37,7 +37,9 @@
       setNativeValue(el, el.value + ch);
       el.dispatchEvent(new InputEvent("input", { bubbles: true, data: ch, inputType: "insertText" }));
       key(el, "keyup", ch);
-      await sleep(rnd(typingMs[0], typingMs[1]));
+      // Фоновая/свёрнутая вкладка: браузер растягивает каждый таймер до ~1 с — посимвольные паузы превратились бы
+      // в минуты. Контент-скрипт видит настоящий document.hidden (подмена действует только в мире страницы).
+      if (!document.hidden) await sleep(rnd(typingMs[0], typingMs[1]));
     }
     fire(el, "change");
   }

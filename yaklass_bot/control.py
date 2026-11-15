@@ -5,6 +5,37 @@ import threading
 import time
 
 
+_local = threading.local()
+
+
+def set_idle_hook(fn) -> None:
+    """Что делать потоку во время пауз (например, водить курсором по заданию — см. presence.py)."""
+    _local.hook = fn
+
+
+def idle_hook():
+    return getattr(_local, "hook", None)
+
+
+def _idle() -> None:
+    hook = getattr(_local, "hook", None)
+    if hook is not None:
+        try:
+            hook()
+        except Exception:  # noqa: BLE001 — пауза не должна падать из-за побочного действия
+            pass
+
+
+def _plain_sleep(seconds: float) -> None:
+    end = time.monotonic() + seconds
+    while True:
+        _idle()
+        left = end - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(0.2, left))
+
+
 class Stopped(Exception):
     """Выполнение остановлено пользователем."""
 
@@ -40,12 +71,14 @@ class RunControl:
                 raise Stopped()
             if self._run.wait(0.2):
                 return
+            _idle()                          # на паузе курсор тоже «на задании»
 
     def sleep(self, seconds: float) -> None:
         """sleep, который реагирует на паузу/стоп (до 0.2 с задержки)."""
         end = time.monotonic() + seconds
         while True:
             self.checkpoint()
+            _idle()
             left = end - time.monotonic()
             if left <= 0:
                 return
@@ -53,4 +86,4 @@ class RunControl:
 
 
 def sleep(control: RunControl | None, seconds: float) -> None:
-    (control.sleep if control else time.sleep)(seconds)
+    (control.sleep if control else _plain_sleep)(seconds)

@@ -24,6 +24,10 @@ LIMIT_MARGIN_S = 75          # запас до конца времени, отв
 FINISH_RESERVE_S = 10        # на завершение работы после последнего задания
 SKIP_SHARE = 0.4             # из заданий «без баллов» такая доля остаётся без ответа, остальные — неверно
 PARTIAL_SHARE = 0.35         # из заданий с несколькими полями столько решается частично
+THEORY_CPS = (40.0, 70.0)    # скорость «чтения» теории, символов в секунду (просмотр, а не заучивание)
+THEORY_S = (5.0, 40.0)       # пределы времени на страницу теории, с
+THEORY_SHARE = 0.5           # теория — не больше такой доли времени типичного задания
+THEORY_DEFAULT_CHARS = 1500  # текст теории не разобрался — считаем страницу средней
 
 
 # ---------------------------------------------------------------- выбор режима
@@ -359,7 +363,26 @@ class Stealth:
     def _weight(task: Task) -> float:
         return 0.5 if task.is_theory else 1.0 + 0.5 * min(len(task.fields), 6)
 
+    def typical_slice(self) -> float:
+        """Сколько времени по расписанию пришлось бы на одно обычное задание из оставшихся."""
+        return self.schedule.left() / (self.after + 1)
+
+    def theory_slice(self, task: Task) -> float:
+        """Теория «читается» по объёму текста и всегда заметно быстрее, чем решается задание: 40 строк текста
+        не просматривают дольше, чем решают уравнение. Сэкономленное время достаётся следующим заданиям
+        (расписание делит то, что осталось), а остаток в конце — проверке ответов перед завершением."""
+        chars = len((task.text or "").strip()) or THEORY_DEFAULT_CHARS
+        reading = min(THEORY_S[1], max(THEORY_S[0], chars / self.rng.uniform(*THEORY_CPS)))
+        typical = self.typical_slice()
+        s = min(reading, THEORY_SHARE * typical * self.rng.uniform(0.8, 1.0))
+        s = max(s, min(THEORY_S[0], 0.3 * typical))            # совсем мгновенно тоже не читают
+        if task.time_left_s is not None:
+            s = min(s, max(0.0, task.time_left_s - LIMIT_MARGIN_S / 2))
+        return max(0.0, min(s, self.schedule.left()))
+
     def slice_for(self, task: Task) -> float:
+        if task.is_theory:
+            return self.theory_slice(task)
         w = self._weight(task)
         if not task.is_theory:
             self._wsum += w
@@ -369,6 +392,11 @@ class Stealth:
         if task.time_left_s is not None:                # страница знает точнее: не выходим за лимит работы
             s = min(s, max(0.0, task.time_left_s - LIMIT_MARGIN_S / 2))
         return s
+
+    def review_s(self) -> float:
+        """Остаток расписания после последнего задания — «проверяет ответы» перед завершением, чтобы работа
+        заняла заданное время, даже если в конце была теория или задания решились быстрее."""
+        return self.schedule.left() * self.rng.uniform(0.85, 1.0)
 
     def sleep(self, seconds: float, control: RunControl | None) -> None:
         if seconds > 0:

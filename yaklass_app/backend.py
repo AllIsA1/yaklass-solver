@@ -20,6 +20,7 @@ from yaklass_bot.control import RunControl
 from yaklass_bot.guard import BLOCKED_MSG, SiteBlocked, check_page, is_blocked, page_title
 from yaklass_bot.models import Work
 from yaklass_bot.pace import Pace
+from yaklass_bot.presence import install as install_presence
 from yaklass_bot.parser import parse_preview, parse_works_list
 from yaklass_bot.runner import wait_page_ready
 from yaklass_bot.session import load_cookies, to_playwright_cookies
@@ -304,12 +305,14 @@ class PlaywrightBackend(Backend):
             ctx = self._launch_any(s, lambda kw: pw.chromium.launch_persistent_context(
                 str(profile), headless=headless, no_viewport=True, **kw))
             self._restore(ctx)
+            install_presence(ctx)
             return ctx, ctx.close
         browser = self._launch_any(s, lambda kw: pw.chromium.launch(headless=headless, **kw))
         ua = build_user_agent(s.cookie_browser, getattr(browser, "version", ""))
         ctx = browser.new_context(user_agent=ua) if ua else browser.new_context()
         self.last_user_agent = ua or "(строка самого браузера)"
         ctx.add_cookies(cookies)
+        install_presence(ctx)
         return ctx, browser.close
 
     @staticmethod
