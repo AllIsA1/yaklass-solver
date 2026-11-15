@@ -94,41 +94,41 @@ document.addEventListener('mousemove',e=>{ if(e.isTrusted) tr++ });
 </script></body></html>"""
 
 
-def _browser():
-    pw_mod = pytest.importorskip("playwright.sync_api")
-    return pw_mod.sync_playwright
-
-
 def test_page_does_not_see_leaving_and_gets_trusted_moves():
-    sync_playwright = _browser()
+    pw_mod = pytest.importorskip("playwright.sync_api")
     from yaklass_bot.presence import install
-    try:
-        pw = sync_playwright().start()
-        b = pw.chromium.launch(headless=True)
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"нет Chromium Playwright: {e}")
-    try:
-        ctx = b.new_context()
-        install(ctx)
-        page = ctx.new_page()
-        page.route("http://presence.test/", lambda r: r.fulfill(body=HTML, content_type="text/html"))
-        page.goto("http://presence.test/")
-        page.evaluate("""()=>{document.dispatchEvent(new Event('visibilitychange'));
-            window.dispatchEvent(new FocusEvent('blur'));
-            document.dispatchEvent(new MouseEvent('mouseleave'));
-            document.body.dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:null}));}""")
-        with Presence(page) as p:
-            control.sleep(None, 2.5)
-            page.mouse.move(20, 20)                          # «человек» повёл мышью — эмуляция уступает
-            moves = p.moves
-            p.nudge()
-            assert p.moves == moves and p.skipped == 1
-        st = page.evaluate("""()=>({log, tr, hidden: document.hidden, vis: document.visibilityState,
-            focus: document.hasFocus(), src: String(Object.getOwnPropertyDescriptor(Document.prototype,'hidden').get)})""")
-        assert st["log"] == []
-        assert st["hidden"] is False and st["vis"] == "visible" and st["focus"] is True
-        assert "[native code]" in st["src"]
-        assert st["tr"] > 0 and p.moves >= 2
-    finally:
-        b.close()
-        pw.stop()
+    # with — чтобы Playwright остановился и при пропуске теста: иначе его цикл событий остаётся в потоке,
+    # и следующие тесты падают на asyncio.run() (так было в CI, где нет Chromium)
+    with pw_mod.sync_playwright() as pw:
+        try:
+            b = pw.chromium.launch(headless=True)
+        except Exception as e:  # noqa: BLE001
+            pytest.skip(f"нет Chromium Playwright: {e}")
+        try:
+            _check_presence(b, install)
+        finally:
+            b.close()
+
+
+def _check_presence(b, install):
+    ctx = b.new_context()
+    install(ctx)
+    page = ctx.new_page()
+    page.route("http://presence.test/", lambda r: r.fulfill(body=HTML, content_type="text/html"))
+    page.goto("http://presence.test/")
+    page.evaluate("""()=>{document.dispatchEvent(new Event('visibilitychange'));
+        window.dispatchEvent(new FocusEvent('blur'));
+        document.dispatchEvent(new MouseEvent('mouseleave'));
+        document.body.dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:null}));}""")
+    with Presence(page) as p:
+        control.sleep(None, 2.5)
+        page.mouse.move(20, 20)                          # «человек» повёл мышью — эмуляция уступает
+        moves = p.moves
+        p.nudge()
+        assert p.moves == moves and p.skipped == 1
+    st = page.evaluate("""()=>({log, tr, hidden: document.hidden, vis: document.visibilityState,
+        focus: document.hasFocus(), src: String(Object.getOwnPropertyDescriptor(Document.prototype,'hidden').get)})""")
+    assert st["log"] == []
+    assert st["hidden"] is False and st["vis"] == "visible" and st["focus"] is True
+    assert "[native code]" in st["src"]
+    assert st["tr"] > 0 and p.moves >= 2
