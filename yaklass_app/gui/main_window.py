@@ -11,7 +11,8 @@ from .. import __version__
 from ..agent import Agent
 from ..backend import chromium_installed, install_chromium
 from ..settings import Store
-from .pages import HistoryPage, HomePage, LogPage, SettingsPage, WorksPage
+from ..sound import play_done
+from .pages import HistoryPage, HomePage, LogPage, ModelTestPage, SettingsPage, WorksPage
 from .theme import stylesheet
 from .widgets import BrandMark, Bridge, Pill, refresh_icons, set_icon, set_theme_name
 
@@ -38,7 +39,8 @@ def _pts(v) -> str:
     return str(int(f)) if f == int(f) else f"{f:.1f}".replace(".", ",")
 
 
-NAV = [("Главная", "home"), ("Работы", "works"), ("История", "history"), ("Настройки", "settings"), ("Журнал", "log")]
+NAV = [("Главная", "home"), ("Работы", "works"), ("История", "history"), ("Тест модели", "spark"),
+       ("Настройки", "settings"), ("Журнал", "log")]
 
 
 class MainWindow(QMainWindow):
@@ -75,9 +77,9 @@ class MainWindow(QMainWindow):
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
         self.stack = QStackedWidget()
-        self.home, self.works, self.history, self.settings, self.log = (
-            HomePage(), WorksPage(), HistoryPage(), SettingsPage(), LogPage())
-        self.pages = (self.home, self.works, self.history, self.settings, self.log)
+        self.home, self.works, self.history, self.modeltest, self.settings, self.log = (
+            HomePage(), WorksPage(), HistoryPage(), ModelTestPage(), SettingsPage(), LogPage())
+        self.pages = (self.home, self.works, self.history, self.modeltest, self.settings, self.log)
         for i, ((title, icon), page) in enumerate(zip(NAV, self.pages)):
             b = QPushButton(f"  {title}")
             b.setObjectName("nav")
@@ -152,8 +154,13 @@ class MainWindow(QMainWindow):
         self.home.dismiss_update_requested.connect(self.home.hide_update)
         self.home.install_update_requested.connect(self.do_install_update)
         self.settings.key_changed.connect(lambda k: setattr(self.store, "own_api_key", k))
+        self.modeltest.start_requested.connect(self.start_model_test)
+        self.modeltest.stop_requested.connect(self.agent.stop_model_test)
         self.load_settings()
         self.history.set_items(self.agent.history.items())
+        last = self.agent.last_model_test()
+        if last is not None and last.items:
+            self.modeltest.show_report(last.to_dict())
 
     # ------------------------------------------------------------ вспомогательное
     def run_async(self, fn: Callable, cb: Callable) -> None:
@@ -164,6 +171,11 @@ class MainWindow(QMainWindow):
                 res, err = None, e
             self.bridge.done.emit(cb, res, err)
         threading.Thread(target=work, daemon=True).start()
+
+    def start_model_test(self) -> None:
+        ok, why = self.agent.start_model_test()
+        if not ok:
+            QMessageBox.information(self, "Тест модели", why)
 
     def _go(self, i: int) -> None:
         self.stack.setCurrentIndex(i)
@@ -193,6 +205,7 @@ class MainWindow(QMainWindow):
         self.apply_theme(s.theme)
         self.settings.load(s, bool(self.store.own_api_key))
         self.home.set_login_mode(s.browser_mode == "cookies", s.cookie_browser)
+        self.modeltest.set_available(s.solver_mode == "own")
         self.refresh_link_state()
 
     def clear_history(self) -> None:
@@ -317,6 +330,7 @@ class MainWindow(QMainWindow):
         s.server_url = old.server_url          # адрес сервера задаёт только привязка (код подключения), не форма настроек
         self.store.save(s)
         self.apply_theme(s.theme)
+        self.modeltest.set_available(s.solver_mode == "own")
         if (s.channel, s.browser_path) != (old.channel, old.browser_path):
             QTimer.singleShot(0, self.offer_chromium)
         # соединение с сервером зависит только от адреса сервера; иначе лишний разрыв (и повторные
@@ -350,11 +364,21 @@ class MainWindow(QMainWindow):
             score = ""
             if p.get("percent") is not None and p.get("total"):
                 score = f" Результат: {p['percent']:g}% ({_pts(p.get('earned'))}/{_pts(p.get('total'))})."
-            self.home.set_result(("Работа завершена." if ok else "Работа не завершена.") + score + " " + (p.get("note") or "") +
+            if ok and p.get("mode") != "dry" and self.store.load().sound_on_finish:
+                play_done()
+            head = ("Ответы выставлены, но не отправлены." if p.get("mode") == "dry"
+                    else "Работа завершена." if ok else "Работа не завершена.")
+            self.home.set_result(head + score + " " + ("" if p.get("mode") == "dry" else (p.get("note") or "")) +
                                  (f"\n{parts}" if parts else ""))
             self.log.add(f"Итог: {parts} — {p.get('note', '')}")
         elif name == "history":
             self.history.set_items(self.agent.history.items())
+        elif name == "model_test_started":
+            self.modeltest.set_running(True, p.get("total", 0))
+        elif name == "model_test_item":
+            self.modeltest.add_item(p["done"], p["total"], p["item"])
+        elif name == "model_test_done":
+            self.modeltest.show_report(p.get("report"), p.get("error", ""))
         elif name == "works":
             self.works.set_works(p["works"], p.get("new_ids", []))
         elif name == "login_required":

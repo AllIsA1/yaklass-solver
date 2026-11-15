@@ -116,6 +116,7 @@ export class Runner {
       for (const n of cur.nav) if (n.href) hrefs.set(n.position, abs(base, n.href));
       hrefs.set(pos, cur.url);
       this.env.log(`\n── Задание ${pos}/${total} ──`);
+      this.env.progress(idx, total, `задание ${pos} из ${total}: выполняется`);   // сразу, а не после задания
       const o = await this.doTask(cur, mode, pace, runId, { maxPoints, limitS });
       o.position = o.position || pos;
       res.outcomes.push(o);
@@ -184,7 +185,9 @@ export class Runner {
     const c = this.control;
     let s = await this.page();
     if (!s.overview.rows.length && s.overviewHref) { await navigate(this.tabId, s.overviewHref); s = await this.page(); }
-    const unanswered = s.overview.rows.filter((r) => !r.answered);
+    // позиции, с которыми проход уже разобрался (ответ отправлен, теория отмечена), завершению не мешают
+    const handled = new Set(res.outcomes.filter((o) => SENT.includes(o.status) || o.status === "theory").map((o) => o.position));
+    const unanswered = s.overview.rows.filter((r) => !r.answered && !handled.has(r.position));
     if (unanswered.length) log("  на странице завершения без ответа: " + unanswered.map((r) => r.title).join(", "));
     let ok = false;
     if (s.overview.complete_action || s.completeForm) ok = await this.completeByForm(log);

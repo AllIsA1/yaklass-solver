@@ -386,8 +386,8 @@ class HomePage(Page):
         self.bar.setRange(0, max(total, 1))
         self.bar.setValue(done)
         self.bar.setFormat(f"{done} из {total}")
-        self.progress_lbl.setText(f"{done} из {total}")
-        self.run_text.setText(note)
+        self.progress_lbl.setText(f"готово {done} из {total}")
+        self.run_text.setText(note[:1].upper() + note[1:] if note else note)
 
     def set_result(self, text: str):
         self.run_text.setText(text)
@@ -684,6 +684,7 @@ class SettingsPage(Page):
         self.btn_check_updates = _btn("Проверить обновления", icon="refresh")
         self.btn_check_updates.clicked.connect(self.check_updates_requested.emit)
         self.update_msg = label("", "hint")
+        self.sound = Toggle()
         self.theme = QComboBox()
         self.theme.addItem("Тёмная", "dark")
         self.theme.addItem("Светлая", "light")
@@ -697,6 +698,7 @@ class SettingsPage(Page):
                        "из Telegram."),
             SettingRow("Период поиска", self.poll, "Проверять работы раз в … минут"),
             SettingRow("Тема", self.theme, control_width=180),
+            SettingRow("Звук по завершении работы", self.sound, "Короткий сигнал, когда бот завершил работу на сайте."),
             SettingRow("Узнавать о новых версиях", self.check_updates, "Приложение само проверяет, вышла ли новая версия."),
             SettingRow("Скачивать обновления в фоне", self.auto_download,
                        "Новая версия скачивается и проверяется заранее; устанавливается только по вашей кнопке."),
@@ -746,6 +748,7 @@ class SettingsPage(Page):
         self.auto_poll.setChecked(s.auto_poll)
         self.poll.setValue(s.poll_minutes)
         self._set_combo(self.theme, s.theme)
+        self.sound.setChecked(s.sound_on_finish)
         self.check_updates.setChecked(s.check_updates)
         self.auto_download.setChecked(s.auto_download_updates)
         self._toggle_own()
@@ -773,6 +776,7 @@ class SettingsPage(Page):
         s.auto_poll = self.auto_poll.isChecked()
         s.poll_minutes = self.poll.value()
         s.theme = self.theme.currentData()
+        s.sound_on_finish = self.sound.isChecked()
         s.check_updates = self.check_updates.isChecked()
         s.auto_download_updates = self.auto_download.isChecked()
         return s
@@ -904,5 +908,130 @@ class HistoryPage(Page):
             self.clear_requested.emit()
 
 
-__all__ = ["HomePage", "WorksPage", "HistoryPage", "SettingsPage", "LogPage", "RunDialog", "WorkCard", "release_notes_text",
+# ============================================================ Тест модели
+def _conf(v) -> str:
+    return f"{round(v * 100)}%" if isinstance(v, (int, float)) else "—"
+
+
+class ModelTestPage(Page):
+    """Тест модели по всем предметам (только «Свой API»): по 3 задания на предмет, от простого к сложному."""
+    start_requested = Signal()
+    stop_requested = Signal()
+
+    def __init__(self):
+        super().__init__("Тест модели", "Как ваша модель справляется с заданиями разных предметов")
+        from ..modeltest import ITEMS, SUBJECTS
+        self.n_items, self.n_subjects = len(ITEMS), len(SUBJECTS)
+        self.intro = Card("Проверка модели", icon="spark")
+        self.intro_text = label("", "muted")
+        self.btn_start = _btn("Запустить тест", "primary", icon="play")
+        self.btn_stop = _btn("Стоп", "danger", icon="stop", role="danger")
+        self.btn_start.clicked.connect(self.start_requested.emit)
+        self.btn_stop.clicked.connect(self.stop_requested.emit)
+        self.bar = QProgressBar()
+        self.bar.setTextVisible(False)
+        self.progress_lbl = label("", "hint", wrap=False)
+        self.intro.body.addWidget(self.intro_text)
+        self.intro.body.addLayout(row(self.bar, self.progress_lbl, fill=self.bar, spacing=12))
+        self.intro.body.addLayout(row(self.btn_start, self.btn_stop, None))
+        self.content.addWidget(self.intro)
+        self.summary = Card("Итог", icon="check")
+        self.summary_big = label("", "bigPercent", wrap=False)
+        self.summary_text = label("", "muted")
+        self.summary.body.addLayout(row(self.summary_big, self.summary_text, fill=self.summary_text, spacing=18))
+        self.content.addWidget(self.summary)
+        self.list_host = QWidget()
+        self.list = QVBoxLayout(self.list_host)
+        self.list.setContentsMargins(0, 0, 0, 0)
+        self.list.setSpacing(10)
+        self.content.addWidget(self.list_host)
+        self.content.addStretch(1)
+        self.items: list[dict] = []
+        self.set_available(False)
+        self.set_running(False)
+        self.summary.hide()
+
+    def set_available(self, own: bool) -> None:
+        self.available = own
+        if own:
+            self.intro_text.setText(
+                f"{self.n_items} заданий по {self.n_subjects} предметам ЯКласса — по 3 на предмет, от простого к сложному. "
+                "Модель решает их так же, как задания на сайте; ответы сверяются с правильными. Запросы идут к вашему "
+                "API напрямую (тратят ваш баланс), обычно это занимает несколько минут.")
+        else:
+            self.intro_text.setText("Тест доступен только в режиме «Свой API»: выберите его в Настройки → Решатель. "
+                                    "В серверном режиме модель выбирает администратор сервера.")
+        self.btn_start.setEnabled(own and not getattr(self, "running", False))
+
+    def set_running(self, running: bool, total: int = 0) -> None:
+        self.running = running
+        self.btn_start.setVisible(not running)
+        self.btn_start.setEnabled(self.available and not running)
+        self.btn_stop.setVisible(running)
+        self.bar.setVisible(running)
+        self.progress_lbl.setVisible(running)
+        if running:
+            self.items = []
+            self.bar.setRange(0, max(total, 1))
+            self.bar.setValue(0)
+            self.progress_lbl.setText(f"0 из {total}")
+            self._render()
+
+    def add_item(self, done: int, total: int, item: dict) -> None:
+        self.items.append(item)
+        self.bar.setValue(done)
+        self.progress_lbl.setText(f"{done} из {total}")
+        self._render()
+
+    def show_report(self, report: dict | None, error: str = "") -> None:
+        self.set_running(False)
+        if report is None:
+            self.summary.show()
+            self.summary_big.setText("")
+            self.summary_text.setText(f"Тест прерван: {error}" if error else "Тест прерван")
+            return
+        self.items = list(report.get("items") or [])
+        self._render(model=report.get("model", ""), stopped=bool(report.get("stopped")),
+                     when=report.get("started"))
+
+    def _clear_list(self) -> None:
+        while self.list.count():
+            w = self.list.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+
+    def _render(self, model: str = "", stopped: bool = False, when=None) -> None:
+        from ..modeltest import LEVELS, Report
+        self._clear_list()
+        if not self.items:
+            self.summary.hide()
+            return
+        rep = Report.from_dict({"model": model, "started": when or 0, "items": self.items})
+        self.summary.show()
+        self.summary_big.setText(f"{rep.percent:.0f}%")
+        ok_c, bad_c = rep.calibration()
+        bits = [f"Верно {rep.correct} из {len(rep.items)}", f"средняя уверенность {_conf(rep.avg_confidence)}"]
+        if ok_c is not None and bad_c is not None:
+            bits.append(f"в верных ответах {_conf(ok_c)}, в ошибках {_conf(bad_c)}")
+        head = (f"Модель {model}. " if model else "") + (
+            f"Тест от {time.strftime('%d.%m.%Y %H:%M', time.localtime(when))}. " if when else "")
+        self.summary_text.setText(head + "; ".join(bits) + ("." if not stopped else ". Тест остановлен досрочно."))
+        stats = rep.by_subject()
+        for st in sorted(stats, key=lambda x: (x.percent, x.subject)):    # сначала слабые предметы
+            card = Card(st.subject)
+            tone = "ok" if st.correct == st.total else ("bad" if st.correct == 0 else "warn")
+            card.head.addWidget(label(f"уверенность {_conf(st.avg_confidence)}", "hint", wrap=False))
+            card.head.addWidget(Pill(f"{st.correct} из {st.total}", tone))
+            for r in [x for x in rep.items if x.subject == st.subject]:
+                mark = "✓" if r.correct else "✗"
+                q = r.question if len(r.question) <= 160 else r.question[:157] + "…"
+                card.body.addWidget(label(f"{mark}  {LEVELS.get(r.level, '')}: {q}", "", wrap=True))
+                detail = (f"ошибка API: {r.error}" if r.error else
+                          f"ответ модели: {r.answer}" + ("" if r.correct else f"  ·  правильно: {r.expected}")
+                          + f"  ·  уверенность {_conf(r.confidence)}")
+                card.body.addWidget(label("     " + detail, "hint", wrap=True))
+            self.list.addWidget(card)
+
+
+__all__ = ["HomePage", "WorksPage", "HistoryPage", "SettingsPage", "LogPage", "ModelTestPage", "RunDialog", "WorkCard", "release_notes_text",
            "greeting", "form_row", "icon_label"]

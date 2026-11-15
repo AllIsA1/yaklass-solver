@@ -82,6 +82,7 @@ class Agent:
         self.restart_fn = updater.restart      # в тестах подменяется
         self._blocked_until = 0.0              # сайт отклонил запросы: до этого времени автоматических опросов нет
         self._block_reported = False
+        self._model_test_stop: threading.Event | None = None     # идёт тест модели (см. modeltest.py)
 
     # ------------------------------------------------------------ служебное
     def emit(self, name: str, **payload) -> None:
@@ -422,7 +423,7 @@ class Agent:
                                         self.log, on_progress, style=style)
             summary = {STATUS_NAMES.get(k, k): v for k, v in res.summary().items()}
             title = res.title or self.work_title(work_id)
-            payload = {"work_id": work_id, "title": title, "completed": res.completed, "summary": summary,
+            payload = {"work_id": work_id, "mode": mode, "title": title, "completed": res.completed, "summary": summary,
                        "note": res.note, "stopped": res.stopped, "fatal": res.fatal, "est_percent": res.est_percent,
                        "earned": res.earned, "total": res.total, "percent": res.percent}
             self.emit("finished", **payload)
@@ -433,8 +434,8 @@ class Agent:
                                   "problems": [{"position": o.position, "status": STATUS_NAMES.get(o.status, o.status),
                                                 "note": o.note[:200]} for o in res.pending][:20]})
             extra = {k: payload[k] for k in ("est_percent", "earned", "total", "percent") if payload[k] is not None}
-            self._send({"type": "finished", **{k: payload[k] for k in ("work_id", "title", "completed", "summary",
-                                                                       "note")}, **extra})
+            self._send({"type": "finished", **{k: payload[k] for k in ("work_id", "mode", "title", "completed",
+                                                                       "summary", "note")}, **extra})
         except Exception as e:  # noqa: BLE001
             self.log(f"Ошибка выполнения: {e}")
             self._record_history({**base_entry, "elapsed_s": int(time.time() - started), "completed": False,
@@ -445,6 +446,64 @@ class Agent:
         finally:
             self._control = None
             self._set_state("idle")
+
+    # ------------------------------------------------------------ тест модели
+    @property
+    def model_test_running(self) -> bool:
+        return self._model_test_stop is not None
+
+    def start_model_test(self) -> tuple[bool, str]:
+        """Тест модели — только в режиме «Свой API» (запросы к модели идут с этого ПК, квоту сервера не тратят)."""
+        s = self.store.load()
+        if s.solver_mode != "own":
+            return False, "Тест модели доступен только в режиме «Свой API» (Настройки → Решатель)."
+        if self.model_test_running:
+            return False, "Тест уже идёт"
+        try:
+            solver = solvers.make_solver(s, self.store.token, self.store.own_api_key)
+        except Exception as e:  # noqa: BLE001
+            return False, f"Не удалось подготовить решатель: {e}"
+        stop = threading.Event()
+        self._model_test_stop = stop
+        model = str(s.own_api.get("model") or "")
+        threading.Thread(target=self._run_model_test, args=(solver, model, stop), daemon=True,
+                         name="model-test").start()
+        return True, ""
+
+    def stop_model_test(self) -> None:
+        if self._model_test_stop is not None:
+            self._model_test_stop.set()
+
+    def _run_model_test(self, solver, model: str, stop: threading.Event) -> None:
+        from . import modeltest
+        self.log(f"Тест модели {model or ''}: {len(modeltest.ITEMS)} заданий по {len(modeltest.SUBJECTS)} предметам")
+        self.emit("model_test_started", total=len(modeltest.ITEMS), model=model)
+
+        def on_item(done: int, total: int, r) -> None:
+            mark = "✓" if r.correct else "✗"
+            self.log(f"  {mark} {r.subject} ({modeltest.LEVELS[r.level]}): ответ «{r.answer}», верно «{r.expected}»"
+                     + (f", уверенность {r.confidence:.2f}" if r.confidence is not None else "")
+                     + (f" — ошибка: {r.error}" if r.error else ""))
+            self.emit("model_test_item", done=done, total=total, item=modeltest.asdict(r))
+
+        try:
+            rep = modeltest.run(lambda task, lg: solver.solve(task, lg), model=model, stop=stop, on_item=on_item)
+            try:
+                modeltest.save(rep, self.dir)
+            except OSError:
+                pass
+            self.log(f"Тест модели: верно {rep.correct} из {len(rep.items)} ({rep.percent:.0f}%)"
+                     + (" — остановлен" if rep.stopped else ""))
+            self.emit("model_test_done", report=rep.to_dict())
+        except Exception as e:  # noqa: BLE001 — нет ключа, баланс, недоступен API
+            self.log(f"Тест модели прерван: {e}")
+            self.emit("model_test_done", report=None, error=str(e))
+        finally:
+            self._model_test_stop = None
+
+    def last_model_test(self):
+        from . import modeltest
+        return modeltest.load(self.dir)
 
     def _record_history(self, entry: dict) -> None:
         try:

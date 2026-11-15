@@ -10,8 +10,9 @@
   const CONFIRM_RX = /^\s*(да|заверш|подтверд|ок\b|ok\b|сдать)/i;
   const CANCEL_RX = /^\s*(отмен|закры|нет\b|назад|cancel|no\b|close)/i;
   const NEW_BTN = "#submitAnswerBtn", REWRITE_BTN = "#correctAnswerBtn", FINISH_BTN = "#finishTestBtn";
-  const DIALOG_BUTTONS = "[role=dialog] button, .ui-dialog button, .ui-dialog-buttonpane button, .yk-dialog button, " +
-                         ".dialog-container button, .modal button";
+  const DIALOGS = ["[role=dialog]", ".ui-dialog", ".ui-dialog-buttonpane", ".yk-dialog", ".dialog-container", ".modal", "#popupDialog"];
+  const CLICKABLE = ["button", "a", "[role=button]", "input[type=button]", "input[type=submit]", ".ui-button", ".btn"];
+  const DIALOG_BUTTONS = DIALOGS.flatMap((d) => CLICKABLE.map((c) => `${d} ${c}`)).join(", ");
   const COMPLETE_BTN = 'form[action*="/TestWorkRun/CompleteTest"] button[type=submit], ' +
                        'form[action*="/TestWorkRun/CompleteTest"] input[type=submit]';
 
@@ -112,7 +113,7 @@
     confirmDialog() {                                                    // кнопка согласия в окне подтверждения
       for (const b of document.querySelectorAll(DIALOG_BUTTONS)) {
         const text = label(b);
-        if (visible(b) && text && CONFIRM_RX.test(text) && !CANCEL_RX.test(text)) {
+        if (b.id !== "finishTestBtn" && visible(b) && text && CONFIRM_RX.test(text) && !CANCEL_RX.test(text)) {
           clickLater(b);
           return { ok: true, text };
         }

@@ -257,6 +257,9 @@
     return items;
   }
 
+  // «Ответ получен» у заданий; у теории — «Прочитано», «Просмотрено»... (как DONE_STATUS_RX в parser.py)
+  const DONE_STATUS_RX = /ответ получен|прочитан|просмотрен|изучен|ознакомл/i, NOT_DONE_RX = /(^|\s)не\s|нет ответа/i;
+
   function parseOverview(doc) {
     const rows = [];
     for (const row of qa(doc, ".test-exercise-list-v2__row")) {
@@ -265,7 +268,7 @@
       const st = status ? textOf(status, " ") : "";
       const m = /^\s*(\d+)\./.exec(title);
       rows.push({ position: m ? parseInt(m[1], 10) : rows.length + 1, title, status: st,
-                  answered: st.toLowerCase().includes("ответ получен") });
+                  answered: DONE_STATUS_RX.test(st) && !NOT_DONE_RX.test(st) });
     }
     const form = q1(doc, 'form[action*="/TestWorkRun/CompleteTest"]');
     return { rows, complete_action: form ? form.getAttribute("action") : "",

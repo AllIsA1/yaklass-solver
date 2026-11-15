@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Yaklass Solver",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Выполняет проверочные работы ЯКласса в вашем браузере через сервер Yaklass Solver; управляется из Telegram.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "tabs", "alarms"],

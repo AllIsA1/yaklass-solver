@@ -136,7 +136,8 @@ def test_full_run_answers_all_rewrites_done_task_and_completes(env):
     assert re.search(r'name="answerAction"\s+correct', dict(fake.submits)[2])    # «Сохранить», а не «Ответить»
     assert not re.search(r'name="answerAction"', dict(fake.submits)[1])          # у нового ответа такого поля нет
     assert res.completed and fake.completed == 1                                 # форма CompleteTest отправлена
-    assert progress[0] == (1, 9) and progress[-1] == (9, 9)
+    assert progress[0] == (0, 9) and progress[-1] == (9, 9)          # прогресс — с начала первого задания
+    assert (4, 9) in progress                                        # «задание 5 выполняется»: готово 4
 
 
 def test_failed_task_blocks_finishing(env):

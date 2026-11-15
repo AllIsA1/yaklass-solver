@@ -271,8 +271,11 @@ def _visible(loc) -> bool:
 
 FINISH_BTN = "#finishTestBtn"        # «Завершить» на странице «Список заданий»: открывает окно подтверждения
 CANCEL_RX = re.compile(r"^\s*(отмен|закры|нет\b|назад|cancel|no\b|close)", re.I)
-DIALOG_BUTTONS = ("[role=dialog] button, .ui-dialog button, .ui-dialog-buttonpane button, .yk-dialog button, "
-                  ".dialog-container button, .modal button")
+_DIALOGS = ("[role=dialog]", ".ui-dialog", ".ui-dialog-buttonpane", ".yk-dialog", ".dialog-container", ".modal",
+            "#popupDialog")
+_CLICKABLE = ("button", "a", "[role=button]", "input[type=button]", "input[type=submit]", ".ui-button", ".btn")
+DIALOG_BUTTONS = ", ".join(f"{d} {c}" for d in _DIALOGS for c in _CLICKABLE)
+FINISH_URL_RX = re.compile(r"""finishTestUrl\s*=\s*["']([^"']*/TestWorkRun/CompleteTest[^"']*)["']""")
 
 
 def _press_confirm(page, wait_s: float = 8.0) -> str:
@@ -286,6 +289,8 @@ def _press_confirm(page, wait_s: float = 8.0) -> str:
                 b = loc.nth(i)
                 if not b.is_visible():
                     continue
+                if (b.get_attribute("id") or "") == FINISH_BTN.lstrip("#"):
+                    continue                             # сама кнопка «Завершить» под окном
                 text = (b.inner_text() or b.get_attribute("value") or "").strip()
                 if text and CONFIRM_RX.match(text) and not CANCEL_RX.match(text):
                     b.click()
@@ -361,26 +366,70 @@ def _complete_by_button(page, log: Log) -> bool:
             pass
 
 
-def finish_work(page, base_url: str, log: Log, finish_anyway: bool = False) -> bool:
-    """Открывает «Список заданий» и завершает работу: либо через форму CompleteTest, либо кнопкой «Завершить»
-    с окном подтверждения (вторая кнопка завершения). Без ответа на все задания работа завершается только при
-    finish_anyway."""
+def _complete_by_url(page, log: Log) -> bool:
+    """Запасной путь: окно подтверждения не нашлось или не сработало. Страница сама знает адрес завершения
+    (Yk.exerciseJsSettings.Url.finishTestUrl) — отправляем на него ту же форму, что в старой разметке
+    (POST с токеном защиты от подделки, если он есть на странице)."""
+    try:
+        m = FINISH_URL_RX.search(page.content())
+    except Exception:  # noqa: BLE001
+        return False
+    if not m:
+        return False
+    url = urljoin(page.url, m.group(1).replace("&amp;", "&"))
+    if urlparse(url).hostname != urlparse(page.url).hostname:
+        return False
+    log("  завершаю через адрес завершения со страницы")
+    before = page.url
+    try:
+        page.evaluate("""(url) => {
+            const f = document.createElement('form');
+            f.method = 'post'; f.action = url; f.style.display = 'none';
+            const t = document.querySelector('input[name=__RequestVerificationToken]');
+            if (t) { const i = document.createElement('input'); i.type = 'hidden'; i.name = t.name; i.value = t.value; f.appendChild(i); }
+            document.body.appendChild(f); f.submit();
+        }""", url)
+    except Exception:  # noqa: BLE001 — страница уже уходит
+        pass
+    return _wait_left(page, before)
+
+
+def finish_work(page, base_url: str, log: Log, finish_anyway: bool = False, handled: set[int] | None = None,
+                why: list[str] | None = None) -> bool:
+    """Открывает «Список заданий» и завершает работу: через форму CompleteTest, кнопкой «Завершить» с окном
+    подтверждения (вторая кнопка завершения), а если окно не сработало — через адрес завершения со страницы.
+    Без ответа на все задания работа завершается только при finish_anyway. handled — позиции, с которыми проход
+    уже разобрался (ответ отправлен, теория отмечена): их статус на странице не мешает завершению.
+    why — сюда дописывается причина неудачи (для итогового сообщения)."""
+    why = why if why is not None else []
+
+    def fail(reason: str) -> bool:
+        log(f"  {reason} — работа не завершена")
+        why.append(reason)
+        return False
+
     link = page.locator("a.test-ex-nav-v2__overview").first
     if link.count():
         page.goto(urljoin(page.url, link.get_attribute("href")))
         page.wait_for_load_state("load")
     ov = parse_overview(page.content())
+    open_rows = [r for r in ov.unanswered if not handled or r.position not in handled]
     if ov.unanswered:
-        log("  на странице завершения без ответа: " + ", ".join(r.title for r in ov.unanswered))
+        log("  на странице завершения без ответа: "
+            + ", ".join(f"{r.title} ({r.status or 'без статуса'})" for r in ov.unanswered))
     if ov.can_complete:
-        return _complete_by_form(page, log)
+        return _complete_by_form(page, log) or fail("форма завершения не сработала")
     if not page.locator(FINISH_BTN).count():
-        log("  кнопки завершения нет — работа не завершена")
-        return False
-    if ov.unanswered and not finish_anyway:
-        log("  есть задания без ответа — работа не завершена")
-        return False
-    return _complete_by_button(page, log)
+        if _complete_by_url(page, log):
+            return True
+        return fail("на странице «Список заданий» нет кнопки «Завершить»")
+    if open_rows and not finish_anyway:
+        return fail("есть задания без ответа: " + ", ".join(str(r.position) for r in open_rows))
+    if _complete_by_button(page, log):
+        return True
+    if _complete_by_url(page, log):
+        return True
+    return fail("кнопка «Завершить» нажата, но сайт не подтвердил завершение")
 
 
 def read_result(page, res: "RunResult", log: Log) -> None:
@@ -463,6 +512,8 @@ def _work_loop(page, solve_fn: SolveFn, table, log: Log, outcomes: list[Outcome]
         hrefs.update({n.position: n.href for n in parse_nav(page.content()) if n.href})
         hrefs[pos] = page.url
         log(f"\n── Задание {pos}/{total} ──")
+        if on_progress:                         # сразу: «Выполнение» показывает текущее задание, а не прошлое
+            on_progress(idx, total, f"задание {pos} из {total}: выполняется")
         if stealth:
             stealth.begin(idx)
         o = do_task(page, solve_fn, table, key, log, submit=submit, pace=pace, control=control, stealth=stealth)
@@ -528,7 +579,9 @@ def _execute(page, base_url: str, solve_fn: SolveFn, table, log: Log, res: RunRe
     if res.pending and not finish_anyway:
         res.note = "остались задания без ответа — работа не завершена, доделайте вручную"
         return res
-    res.completed = finish_work(page, base_url, log, finish_anyway)
+    handled = {o.position for o in res.outcomes if o.status in SENT or o.status in ("theory", "left")}
+    why: list[str] = []
+    res.completed = finish_work(page, base_url, log, finish_anyway, handled=handled, why=why)
     if res.completed:
         read_result(page, res, log)
     if res.completed and screenshot_dir is not None:
@@ -537,7 +590,7 @@ def _execute(page, base_url: str, solve_fn: SolveFn, table, log: Log, res: RunRe
         page.screenshot(path=str(path), full_page=True)
         res.note = f"снимок итоговой страницы: {path}"
     elif not res.completed:
-        res.note = "не удалось завершить работу автоматически"
+        res.note = "не удалось завершить работу автоматически" + (f": {why[-1]}" if why else "")
     return res
 
 

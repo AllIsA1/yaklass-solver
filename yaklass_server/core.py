@@ -100,6 +100,7 @@ class Core:
 
 _SENT_NAMES = {STATUS_NAMES[k] for k in SENT}
 _THEORY_NAME = STATUS_NAMES["theory"]
+_FILLED_NAME = STATUS_NAMES["filled"]
 
 
 def fmt_duration(sec: int) -> str:
@@ -144,6 +145,15 @@ def render_finished(ev: dict) -> str:
         total = max(total, ev["tasks_total"] - _count(summary.get(_THEORY_NAME)))
     work = work_label(ev)
     took = f" за {fmt_duration(ev['elapsed_s'])}" if isinstance(ev.get("elapsed_s"), int) else ""
+    filled = _count(summary.get(_FILLED_NAME))
+    if ev.get("mode") == "dry" or (filled and not done):    # «Только заполнить»: ответы выставлены, но не отправлены
+        note = str(ev.get("note") or "")
+        if ev.get("stopped") or "останов" in note:
+            head = f"⏹ {work}: заполнение остановлено{took}"
+        else:
+            head = f"📝 {work}: ответы выставлены{took}"
+        return (f"{head} — {filled} из {total} заданий, без отправки. Проверьте и отправьте сами."
+                if total else f"{head} — без отправки. Проверьте и отправьте сами.")
     pct = round(100 * done / total) if total else 0
     if _is_num(ev.get("percent")) and _is_num(ev.get("earned")) and _is_num(ev.get("total")) and ev["total"]:
         return (f"✅ {work} сделана{took} на {round(ev['percent'])}% "

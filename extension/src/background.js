@@ -170,7 +170,7 @@ async function startWork(workId, mode, style, remote) {
     if (res) {
       const title = res.title || started.title;
       const summary = summarize(res.outcomes);
-      const payload = { type: "finished", work_id: workId, title, completed: res.completed, summary, note: res.note };
+      const payload = { type: "finished", work_id: workId, title, completed: res.completed, summary, note: res.note, mode };
       if (res.percent !== null) Object.assign(payload, { earned: res.earned, total: res.total, percent: res.percent });
       send(payload);
       log(`\nИтоги: ${Object.entries(summary).map(([k, v]) => `${k} ${v}`).join(", ")}\n${res.completed ? "Работа завершена." : "Работа НЕ завершена."} ${res.note}`);

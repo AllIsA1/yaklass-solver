@@ -275,6 +275,12 @@ def parse_result(html: str) -> WorkResult:
     return WorkResult(earned=earned, total=total, pending=pending)
 
 
+# «Ответ получен» у заданий; у теории статус другой («Прочитано», «Просмотрено»...) — раньше такие строки считались
+# заданиями без ответа, и работа с теорией не завершалась автоматически
+DONE_STATUS_RX = re.compile(r"ответ получен|прочитан|просмотрен|изучен|ознакомл", re.I)
+NOT_DONE_RX = re.compile(r"(^|\s)не\s|нет ответа", re.I)              # «Не прочитано», «Нет ответа»
+
+
 def parse_overview(html: str) -> Overview:
     """«Список заданий»: статусы по каждому заданию и форма завершения работы."""
     soup = _soup(html)
@@ -286,7 +292,7 @@ def parse_overview(html: str) -> Overview:
         st = status.get_text(" ", strip=True) if status else ""
         m = re.match(r"\s*(\d+)\.", title)
         rows.append(OverviewRow(position=int(m.group(1)) if m else len(rows) + 1, title=title, status=st,
-                                answered="ответ получен" in st.lower()))
+                                answered=bool(DONE_STATUS_RX.search(st)) and not NOT_DONE_RX.search(st)))
     form = soup.select_one('form[action*="/TestWorkRun/CompleteTest"]')
     return Overview(rows=rows, complete_action=form["action"] if form is not None else "")
 

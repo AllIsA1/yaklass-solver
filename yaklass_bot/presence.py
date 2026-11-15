@@ -143,7 +143,10 @@ AREA_TTL_S = 4.0             # область задания перечитыв�
 
 def install(ctx) -> None:
     """Скрипт присутствия — во все страницы контекста, включая уже открытые."""
-    ctx.add_init_script(PRESENCE_JS)
+    add = getattr(ctx, "add_init_script", None)
+    if add is None:                       # не Playwright-контекст (заглушка в тестах)
+        return
+    add(PRESENCE_JS)
     for p in list(getattr(ctx, "pages", []) or []):
         try:
             p.evaluate(PRESENCE_JS)

@@ -179,3 +179,13 @@ def test_finished_message_shows_real_percent_points_and_title():
     assert "~78%" in render_event(ev)[0] and "Ing and the infinitive" in render_event(ev)[0]
     ev.pop("title")
     assert render_event(ev)[0].startswith("✅ Работа 24383457 сделана")
+
+
+def test_fill_only_mode_is_not_reported_as_unfinished_work():
+    ev = {"type": "finished", "work_id": "9", "title": "Дроби", "mode": "dry", "completed": False, "elapsed_s": 75,
+          "summary": {"заполнено": 7, "теория": 1, "ошибки": 1}, "note": "режим без отправки"}
+    text = render_event(ev)[0]
+    assert text.startswith("📝 Работа «Дроби»: ответы выставлены за 1 мин 15 с") and "7 из 8" in text
+    assert "НЕ завершена" not in text and "0/" not in text
+    old_client = {k: v for k, v in ev.items() if k != "mode"}            # приложение без поля mode
+    assert render_event(old_client)[0].startswith("📝")
