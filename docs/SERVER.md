@@ -43,6 +43,7 @@ sudo systemctl restart yaklass-solver && journalctl -u yaklass-solver -f
 расшифровывается через `STT_BASE_URL` (пусто — `LLM_BASE_URL` и `LLM_API_KEY`), модель `STT_MODEL` (`whisper-1`).
 Если основная модель не у OpenAI, у её провайдера может не быть `/audio/transcriptions`: укажите отдельный сервис,
 например Groq (`STT_BASE_URL=https://api.groq.com/openai/v1`, `STT_MODEL=whisper-large-v3`, `STT_API_KEY=…`).
+Если сервис расшифровки отвечает 404/405, сервер сам переходит на `native` до перезапуска (записи уходят модели).
 `AUDIO_MODE=native` — запись уходит модели как `input_audio` (Gemini, `gpt-4o-audio-preview`). `off` — такие задания
 клиенты пропускают.
 

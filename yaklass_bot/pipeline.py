@@ -6,7 +6,7 @@ from collections.abc import Callable
 from .config import Config
 from .lang import is_english
 from .models import Task
-from .solver.audio import AudioConf, AudioHelper, AudioUnsupported
+from .solver.audio import AudioConf, AudioHelper, AudioUnsupported, SttNotFound
 from .solver.base import Answer, EmptyReply, Provider, solve_task
 from .solver.research import gather_context
 from .solver.search import search as searx
@@ -15,19 +15,27 @@ from .solver.search import search as searx
 def prepare_audio(cfg: Config, provider: Provider, task: Task, log: Callable[[str], None] = print,
                   audio: AudioHelper | None = None) -> tuple[Task, list]:
     """Задание с аудио -> (задание с расшифровками, []) или (задание, записи для модели). Без аудио — как есть.
-    AudioUnsupported, если слушать нечем."""
+    AudioUnsupported, если слушать нечем. transcribe без /audio/transcriptions у сервиса (404/405) переходит на native,
+    если модель принимает звук."""
     if not task.has_audio:
         return task, []
     helper = audio or AudioHelper(AudioConf.from_dict(cfg.audio, cfg.api))
     if helper.mode == "off":
         raise AudioUnsupported("аудирование выключено в настройках")
-    if helper.mode == "native":
+    native = helper.mode == "native" or (helper.stt_missing and provider.supports_audio)
+    if native:
         if not provider.supports_audio:
             raise AudioUnsupported("модель не принимает аудио — включите расшифровку (transcribe)")
         clips = helper.clips(task)
         log(f"  аудио: {len(clips)} запис(ь/и) приложено к запросу")
         return task, clips
-    return helper.transcribed(task, log=log), []
+    try:
+        return helper.transcribed(task, log=log), []
+    except SttNotFound as e:
+        if not provider.supports_audio:
+            raise
+        log(f"  аудио: у сервиса нет расшифровки ({e}) — записи отправлены модели")
+        return task, e.clips
 
 
 def solve(cfg: Config, provider: Provider, task: Task, log: Callable[[str], None] = print,

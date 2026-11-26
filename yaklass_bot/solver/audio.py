@@ -4,7 +4,10 @@ transcribe — расшифровка через OpenAI-совместимый /
              работает с любой основной моделью.
 native     — mp3 прикладывается к запросу chat/completions как input_audio; нужна модель, понимающая звук
              (Gemini, gpt-4o-audio и т.п.).
-off        — задания с аудио не решаются (AudioUnsupported)."""
+off        — задания с аудио не решаются (AudioUnsupported).
+
+Если у сервиса расшифровки нет /audio/transcriptions (404/405 — частый случай, когда адрес STT не задан и берётся
+адрес основной модели не от OpenAI), transcribe сам переходит на native: записи уходят модели (см. pipeline)."""
 from __future__ import annotations
 
 import dataclasses
@@ -35,6 +38,18 @@ EXTS = {"mp3", "wav", "ogg", "oga", "webm", "m4a", "mp4", "aac", "flac"}
 class AudioUnsupported(SolveError):
     """Задание с аудио, а слушать нечем (аудирование выключено, запись не скачалась, расшифровка не удалась).
     Такое задание пропускается как «без поддержки», а не считается ошибкой модели."""
+
+
+class SttNotFound(AudioUnsupported):
+    """У адреса расшифровки нет /audio/transcriptions (или модели STT): ответ 404/405.
+    clips — уже скачанные записи задания, чтобы при переходе на native не скачивать их снова."""
+
+    def __init__(self, msg: str, clips: list | None = None):
+        super().__init__(msg)
+        self.clips = clips or []
+
+
+STT_MISSING = (404, 405)
 
 
 @dataclass
@@ -101,6 +116,8 @@ class Transcriber:
                               files={"file": (f"audio.{clip.format}", clip.data, f"audio/{clip.format}")})
         except requests.RequestException as e:
             raise ProviderUnavailable(f"расшифровка недоступна ({e.__class__.__name__})") from e
+        if r.status_code in STT_MISSING:
+            raise SttNotFound(f"расшифровка: API {r.status_code}: {r.text[:200]}")
         if r.status_code != 200:
             raise SolveError(f"расшифровка: API {r.status_code}: {r.text[:200]}")
         try:
@@ -137,6 +154,8 @@ class AudioHelper:
     def __init__(self, conf: AudioConf, loader: AudioLoader = download, transcriber: Transcriber | None = None):
         self.conf, self.loader = conf, loader
         self.transcriber = transcriber
+        # сервис расшифровки ответил 404/405 — дальше (пока жив объект) сразу native, без лишних запросов к STT
+        self.stt_missing = False
         if self.transcriber is None and conf.mode == "transcribe" and conf.base_url:
             self.transcriber = Transcriber(conf.base_url, conf.model, conf.api_key)
 
@@ -161,10 +180,13 @@ class AudioHelper:
         """Копия задания с заполненным audio_text."""
         if self.transcriber is None:
             raise AudioUnsupported("не задан адрес сервиса расшифровки аудио")
-        texts = []
-        for i, clip in enumerate(self._clips(task), 1):
+        texts, clips = [], self._clips(task)
+        for i, clip in enumerate(clips, 1):
             try:
                 text = self.transcriber.transcribe(clip, language)
+            except SttNotFound as e:
+                self.stt_missing = True
+                raise SttNotFound(f"аудиозапись №{i} не расшифрована: {e}", clips) from e
             except SolveError as e:
                 raise AudioUnsupported(f"аудиозапись №{i} не расшифрована: {e}") from e
             if not text:

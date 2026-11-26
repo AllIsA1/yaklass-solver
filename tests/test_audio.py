@@ -10,7 +10,7 @@ from yaklass_bot.parser import parse_exercise
 from yaklass_bot.pipeline import solve
 from yaklass_bot.solver import audio as audio_mod
 from yaklass_bot.solver.api import ApiProvider
-from yaklass_bot.solver.audio import Audio, AudioConf, AudioHelper, AudioUnsupported
+from yaklass_bot.solver.audio import Audio, AudioConf, AudioHelper, AudioUnsupported, SttNotFound
 from yaklass_bot.solver.base import Provider, SolveError
 
 MP3 = "https://cdn.example.selcdn.net/a/listen1.mp3"
@@ -246,3 +246,42 @@ def test_download_accepts_s3_octet_stream(monkeypatch):
             yield b"ID3"
     monkeypatch.setattr(audio_mod.requests, "get", lambda *a, **k: R())
     assert audio_mod.download("https://x/a.mp3") == Audio(b"ID3", "mp3")
+
+
+class Stt404:
+    def __init__(self):
+        self.calls = 0
+
+    def transcribe(self, clip, language=""):
+        self.calls += 1
+        raise SttNotFound('расшифровка: API 404: {"error":"not_found"}')
+
+
+def test_stt_404_falls_back_to_native_and_remembers():
+    """У провайдера нет /audio/transcriptions: записи уходят модели, STT больше не дёргаем, запись не качаем дважды."""
+    m, stt, loads = Model(), Stt404(), []
+    helper = AudioHelper(AudioConf(mode="transcribe", base_url="https://api.site.invalid/v1"),
+                         loader=lambda u: loads.append(u) or loader(u), transcriber=stt)
+    logs = []
+    ans = solve(Config(), m, task(), log=logs.append, audio=helper)
+    assert ans.values["e8r1|ta"] == "country"
+    assert m.audio[0] and m.audio[0][0].format == "mp3" and "приложены аудиозаписи (1)" in m.prompts[0]
+    assert loads == [MP3] and helper.stt_missing and any("отправлены модели" in s for s in logs)
+    solve(Config(), m, task(), log=lambda s: None, audio=helper)
+    assert stt.calls == 1 and m.audio[1]                             # второе задание — сразу native
+
+
+def test_stt_404_without_audio_capable_model_is_unsupported():
+    helper = AudioHelper(AudioConf(mode="transcribe", base_url="x"), loader=loader, transcriber=Stt404())
+    with pytest.raises(AudioUnsupported, match="404"):
+        solve(Config(), OldModel(), task(), log=lambda s: None, audio=helper)
+
+
+@pytest.mark.parametrize("code, cls", [(404, SttNotFound), (405, SttNotFound), (500, SolveError), (401, SolveError)])
+def test_transcriber_marks_missing_endpoint(monkeypatch, code, cls):
+    class R:
+        status_code, text = code, "{}"
+    monkeypatch.setattr("yaklass_bot.solver.audio.requests.post", lambda *a, **k: R())
+    with pytest.raises(cls) as e:
+        audio_mod.Transcriber("https://x.invalid/v1", "whisper-1").transcribe(Audio(b"x", "mp3"))
+    assert isinstance(e.value, SttNotFound) == (cls is SttNotFound)

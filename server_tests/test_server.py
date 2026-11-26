@@ -341,6 +341,28 @@ def test_audio_task_transcribed_on_server(env, monkeypatch):
     assert seen == ["https://abc.selcdn.net/x/listen.mp3"] and "visit every country" in env.model.prompts[-1]
 
 
+def test_audio_stt_404_falls_back_to_native_on_server(env, monkeypatch):
+    """У провайдера сервера нет /audio/transcriptions: запись уходит модели как input_audio, STT больше не спрашиваем."""
+    import yaklass_server.solver_service as ss
+    from yaklass_bot.solver import audio as audio_mod
+    monkeypatch.setattr(ss, "_is_public", lambda h: True)
+    monkeypatch.setattr(audio_mod, "download", lambda url, allow_redirects=True: audio_mod.Audio(b"x", "mp3"))
+    posts = []
+
+    class R:
+        status_code, text = 404, '{"error":"not_found"}'
+    monkeypatch.setattr(audio_mod.requests, "post", lambda url, **k: posts.append(url) or R())
+    heard, ask = [], env.model.ask
+    monkeypatch.setattr(env.model, "supports_audio", True, raising=False)
+    monkeypatch.setattr(env.model, "ask", lambda prompt, images=(), audio=(): heard.append(list(audio)) or ask(prompt, images))
+    _, token = make_agent(env)
+    for _ in range(2):
+        r = env.client.post("/v1/solve", json=AUDIO_TASK, headers=auth(token))
+        assert r.status_code == 200, r.text
+    assert len(posts) == 1 and posts[0].endswith("/audio/transcriptions")
+    assert [len(h) for h in heard] == [1, 1] and heard[0][0].format == "mp3"
+
+
 def test_audio_from_foreign_host_not_downloaded_and_not_charged(env, monkeypatch):
     from yaklass_bot.solver import audio as audio_mod
     monkeypatch.setattr(audio_mod, "download", lambda *a, **k: pytest.fail("скачивать с чужого хоста нельзя"))
