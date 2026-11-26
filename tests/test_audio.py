@@ -287,39 +287,108 @@ def test_transcriber_marks_missing_endpoint(monkeypatch, code, cls):
     assert isinstance(e.value, SttNotFound) == (cls is SttNotFound)
 
 
-def test_chat_mode_transcribes_with_audio_model_and_main_model_gets_text(monkeypatch):
-    """chat: запись слушает отдельная модель (Gemini) через chat/completions, основная получает только текст."""
-    sent = []
+def mp3(seconds: float) -> bytes:
+    """CBR MP3: MPEG-1 Layer III, 128 кбит/с, 44,1 кГц — длительность по размеру."""
+    return b"\xff\xfb\x90\x00" + b"\0" * (int(16000 * seconds) - 4)
 
-    class R:
-        status_code = 200
-        def json(self):
-            return {"choices": [{"message": {"content": " Daniel wants to visit every country. "}}]}
 
-    def post(url, headers=None, timeout=None, json=None):
-        sent.append((url, headers, json))
+class FakeChat:
+    """Подмена requests.post для chat/completions: replies — по одному ответу (код, текст) на запрос."""
+
+    def __init__(self, replies):
+        self.replies, self.bodies, self.headers, self.urls = list(replies), [], [], []
+
+    def __call__(self, url, headers=None, json=None, timeout=None):
+        self.urls.append(url)
+        self.headers.append(headers)
+        self.bodies.append(json)
+        code, text = self.replies.pop(0)
+
+        class R:
+            status_code = code
+            def json(self_):
+                return {"choices": [{"message": {"content": text}}]}
+        R.text = text
         return R()
-    monkeypatch.setattr("yaklass_bot.solver.api.requests.post", post)
+
+    def way(self, i):
+        return self.bodies[i]["messages"][1]["content"][0]["type"]
+
+
+@pytest.fixture
+def chat(monkeypatch):
+    monkeypatch.setattr(audio_mod.time, "sleep", lambda s: None)
+    def make(*replies):
+        fake = FakeChat(replies)
+        monkeypatch.setattr(audio_mod.requests, "post", fake)
+        return fake
+    return make
+
+
+SPEECH = "Front left. Front right. This is the dummy output module."
+
+
+def test_chat_mode_transcribes_with_audio_model_and_main_model_gets_text(chat):
+    """chat: запись слушает отдельная модель (Gemini) через chat/completions, основная получает только текст."""
+    fake = chat((200, " " + SPEECH + " "))
     m = OldModel()                                                   # основная модель звук не понимает
     prompts = []
     m.ask = lambda prompt, images=(): prompts.append(prompt) or OldModel.ask(m, prompt, images)
-    helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="gemini-flash",
+    helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="gemini-3-pro",
                                    api_key="k"), loader=loader)
     solve(Config(), m, task(), log=lambda s: None, audio=helper)
-    url, headers, body = sent[0]
-    assert url == "https://gw.invalid/v1/chat/completions" and headers == {"Authorization": "Bearer k"}
-    assert body["model"] == "gemini-flash" and "response_format" not in body
-    parts = body["messages"][0]["content"]
-    assert parts[0]["type"] == "text" and "verbatim" in parts[0]["text"]
-    assert parts[1] == {"type": "input_audio", "input_audio": {"data": "SUQzZmFrZQ==", "format": "mp3"}}
-    assert "Daniel wants to visit every country." in prompts[0]
+    body = fake.bodies[0]
+    assert fake.urls == ["https://gw.invalid/v1/chat/completions"] and fake.headers[0] == {"Authorization": "Bearer k"}
+    assert body["model"] == "gemini-3-pro" and body["messages"][0]["role"] == "system"
+    audio_part, text_part = body["messages"][1]["content"]
+    # сначала data:audio/… — так звук доходит до Gemini через посредников, выбрасывающих input_audio
+    assert audio_part == {"type": "image_url", "image_url": {"url": "data:audio/mpeg;base64,SUQzZmFrZQ=="}}
+    assert text_part["type"] == "text"
+    assert SPEECH in prompts[0]
 
 
-@pytest.mark.parametrize("code", [400, 404, 500])
-def test_chat_mode_errors_are_audio_unsupported_without_native_fallback(monkeypatch, code):
-    class R:
-        status_code, text = code, "nope"
-    monkeypatch.setattr("yaklass_bot.solver.api.requests.post", lambda *a, **k: R())
+def test_chat_no_audio_reply_switches_to_input_audio_and_remembers(chat):
+    fake = chat((200, "Please provide or upload the audio recording so I can transcribe it for you."),
+                (200, SPEECH), (200, SPEECH))
+    t = audio_mod.ChatTranscriber("https://gw.invalid/v1", "g")
+    assert t.transcribe(Audio(b"x", "mp3")) == SPEECH and t.way == "input_audio"
+    assert fake.way(0) == "image_url" and fake.way(1) == "input_audio"
+    assert fake.bodies[1]["messages"][1]["content"][0]["input_audio"] == {"data": "eA==", "format": "mp3"}
+    t.transcribe(Audio(b"x", "mp3"))
+    assert fake.way(2) == "input_audio"                              # удачный способ запомнен
+
+
+def test_chat_rejected_attachment_tries_other_way(chat):
+    fake = chat((400, "unsupported MIME type 'audio/mpeg'"), (200, SPEECH))
+    assert audio_mod.ChatTranscriber("https://gw.invalid/v1", "g").transcribe(Audio(b"x", "mp3")) == SPEECH
+    assert [fake.way(0), fake.way(1)] == ["image_url", "input_audio"]
+
+
+def test_chat_retries_temporary_errors(chat):
+    fake = chat((503, "Temporary error"), (503, "Temporary error"), (200, SPEECH))
+    assert audio_mod.ChatTranscriber("https://gw.invalid/v1", "g").transcribe(Audio(b"x", "mp3")) == SPEECH
+    assert len(fake.bodies) == 3
+
+
+def test_chat_truncated_transcript_is_retried_then_rejected(chat):
+    clip = Audio(mp3(30), "mp3")
+    chat((200, "This is"), (200, SPEECH + " " + SPEECH))              # случайный обрыв, вторая попытка полная
+    assert audio_mod.ChatTranscriber("https://gw.invalid/v1", "g").transcribe(clip).startswith("Front left")
+    chat((200, "This is"), (200, "This is"))
+    with pytest.raises(SolveError, match="оборвалась: 2 слов на 30 с.*gemini-3-pro"):
+        audio_mod.ChatTranscriber("https://gw.invalid/v1", "gemini-3.8-flash").transcribe(clip)
+
+
+def test_mp3_seconds():
+    assert audio_mod.mp3_seconds(mp3(20)) == pytest.approx(20, abs=0.01)
+    id3 = b"ID3\x04\x00\x00\x00\x00\x00\x0a" + b"\0" * 10
+    assert audio_mod.mp3_seconds(id3 + mp3(5)) == pytest.approx(5, abs=0.01)
+    assert audio_mod.mp3_seconds(b"OggS" + b"\0" * 1000) is None
+
+
+@pytest.mark.parametrize("code", [401, 404, 500])
+def test_chat_mode_errors_are_audio_unsupported_without_native_fallback(chat, code):
+    chat(*[(code, "nope")] * 3)
     m = Model()
     helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="g"), loader=loader)
     with pytest.raises(AudioUnsupported, match=f"расшифров.*API {code}"):
