@@ -11,6 +11,7 @@ from pathlib import Path
 from platformdirs import user_config_dir, user_data_dir
 
 from yaklass_bot.pace import Pace
+from yaklass_bot.solver.audio import MODES
 
 APP = "yaklass-solver"
 SERVICE = "yaklass-solver"
@@ -68,7 +69,7 @@ class AppSettings:
             errs.append("Неизвестный режим решателя")
         if self.server_url and not self.server_url.startswith(("https://", "http://")):
             errs.append("Адрес сервера должен начинаться с https://")
-        if self.own_api.get("audio_mode", "transcribe") not in ("transcribe", "native", "off"):
+        if self.own_api.get("audio_mode", "transcribe") not in MODES:
             errs.append("Неизвестный режим аудирования")
         if self.solver_mode == "own" and not self.own_api.get("base_url"):
             errs.append("Укажите адрес своего API")

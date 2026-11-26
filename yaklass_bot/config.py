@@ -99,6 +99,7 @@ class Config:
             f"json_mode = {_t(a.get('json_mode', False))}",
             "", "[llm.audio]",
             "# аудирование: transcribe — расшифровка через /audio/transcriptions (Whisper), текст уходит модели;",
+            "# chat — расшифровку делает модель со звуком (model = gemini-…) через chat/completions, текст — основной модели;",
             "# native — запись прикладывается к запросу (модель должна понимать звук: Gemini, gpt-4o-audio); off",
             f"mode = {_t(self.audio.get('mode', 'transcribe'))}",
             "# адрес и ключ сервиса расшифровки; пусто — как у [llm.api]. Пример Groq: https://api.groq.com/openai/v1",

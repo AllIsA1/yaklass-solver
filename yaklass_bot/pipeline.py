@@ -22,8 +22,8 @@ def prepare_audio(cfg: Config, provider: Provider, task: Task, log: Callable[[st
     helper = audio or AudioHelper(AudioConf.from_dict(cfg.audio, cfg.api))
     if helper.mode == "off":
         raise AudioUnsupported("аудирование выключено в настройках")
-    native = helper.mode == "native" or (helper.stt_missing and provider.supports_audio)
-    if native:
+    # transcribe/chat — в текст; transcribe без /audio/transcriptions (404/405) — звук основной модели
+    if helper.mode == "native" or (helper.stt_missing and provider.supports_audio):
         if not provider.supports_audio:
             raise AudioUnsupported("модель не принимает аудио — включите расшифровку (transcribe)")
         clips = helper.clips(task)

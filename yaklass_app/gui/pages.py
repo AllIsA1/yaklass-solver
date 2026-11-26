@@ -611,6 +611,7 @@ class SettingsPage(Page):
         self.search_mode.addItem("Не искать", "off")
         self.audio_mode = QComboBox()
         self.audio_mode.addItem("Расшифровывать (Whisper)", "transcribe")
+        self.audio_mode.addItem("Расшифровывать моделью со звуком", "chat")
         self.audio_mode.addItem("Отправлять звук модели", "native")
         self.audio_mode.addItem("Пропускать такие задания", "off")
         self.audio_mode.currentIndexChanged.connect(self._toggle_audio)
@@ -637,8 +638,9 @@ class SettingsPage(Page):
                 SettingRow("Модель понимает картинки", self.api_vision, "vision"),
                 SettingRow("Режим JSON", self.api_json, "response_format = json_object"),
                 SettingRow("Аудирование", self.audio_mode,
-                           "Задания с аудиозаписью. «Отправлять звук» — только для моделей, понимающих аудио "
-                           "(Gemini, gpt-4o-audio).", control_width=W),
+                           "Задания с аудиозаписью. «Моделью со звуком» — запись расшифровывает отдельная модель "
+                           "(Gemini), текст получает основная. «Отправлять звук» — если основная модель сама "
+                           "понимает аудио.", control_width=W),
                 *self.stt_rows,
                 SettingRow("SearXNG", self.searx, "Поиск по интернету перед ответом", control_width=W),
                 SettingRow("Поиск", self.search_mode, control_width=W))):
@@ -739,7 +741,13 @@ class SettingsPage(Page):
 
     def _toggle_audio(self):
         for r in self.stt_rows:
-            r.setVisible(self.audio_mode.currentData() == "transcribe")
+            r.setVisible(self.audio_mode.currentData() in ("transcribe", "chat"))
+        chat = self.audio_mode.currentData() == "chat"
+        self.stt_model.setPlaceholderText("gemini-…" if chat else "whisper-1")
+        self.stt_rows[0].set_hint("OpenAI-совместимый chat/completions; модель должна понимать звук (Gemini)" if chat else
+                                  "OpenAI-совместимый /audio/transcriptions. Например, Groq: https://api.groq.com/openai/v1")
+        self.stt_rows[1].set_hint("Например, gemini-…-flash; основной модели звук понимать не нужно" if chat else
+                                  "whisper-1 (OpenAI), whisper-large-v3 (Groq)…")
 
     def _toggle_cookie(self):
         self.cookie_row.setVisible(self.bmode.currentData() == "cookies")

@@ -285,3 +285,62 @@ def test_transcriber_marks_missing_endpoint(monkeypatch, code, cls):
     with pytest.raises(cls) as e:
         audio_mod.Transcriber("https://x.invalid/v1", "whisper-1").transcribe(Audio(b"x", "mp3"))
     assert isinstance(e.value, SttNotFound) == (cls is SttNotFound)
+
+
+def test_chat_mode_transcribes_with_audio_model_and_main_model_gets_text(monkeypatch):
+    """chat: запись слушает отдельная модель (Gemini) через chat/completions, основная получает только текст."""
+    sent = []
+
+    class R:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {"content": " Daniel wants to visit every country. "}}]}
+
+    def post(url, headers=None, timeout=None, json=None):
+        sent.append((url, headers, json))
+        return R()
+    monkeypatch.setattr("yaklass_bot.solver.api.requests.post", post)
+    m = OldModel()                                                   # основная модель звук не понимает
+    prompts = []
+    m.ask = lambda prompt, images=(): prompts.append(prompt) or OldModel.ask(m, prompt, images)
+    helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="gemini-flash",
+                                   api_key="k"), loader=loader)
+    solve(Config(), m, task(), log=lambda s: None, audio=helper)
+    url, headers, body = sent[0]
+    assert url == "https://gw.invalid/v1/chat/completions" and headers == {"Authorization": "Bearer k"}
+    assert body["model"] == "gemini-flash" and "response_format" not in body
+    parts = body["messages"][0]["content"]
+    assert parts[0]["type"] == "text" and "verbatim" in parts[0]["text"]
+    assert parts[1] == {"type": "input_audio", "input_audio": {"data": "SUQzZmFrZQ==", "format": "mp3"}}
+    assert "Daniel wants to visit every country." in prompts[0]
+
+
+@pytest.mark.parametrize("code", [400, 404, 500])
+def test_chat_mode_errors_are_audio_unsupported_without_native_fallback(monkeypatch, code):
+    class R:
+        status_code, text = code, "nope"
+    monkeypatch.setattr("yaklass_bot.solver.api.requests.post", lambda *a, **k: R())
+    m = Model()
+    helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="g"), loader=loader)
+    with pytest.raises(AudioUnsupported, match=f"расшифров.*API {code}"):
+        solve(Config(), m, task(), log=lambda s: None, audio=helper)
+    assert not m.prompts and not helper.stt_missing
+
+
+def test_chat_mode_with_whisper_model_left_over_is_explained():
+    helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="whisper-1"),
+                         loader=lambda u: pytest.fail("качать не нужно"))
+    with pytest.raises(AudioUnsupported, match="Модель расшифровки"):
+        solve(Config(), Model(), task(), log=lambda s: None, audio=helper)
+
+
+def test_chat_mode_accepted_by_configs(tmp_path):
+    from yaklass_app.settings import AppSettings
+    from yaklass_server.settings import Settings
+    s = AppSettings()
+    s.own_api["audio_mode"] = "chat"
+    assert not any("аудирован" in e for e in (s.validate() or []))
+    assert AudioConf.from_dict({"mode": "chat", "model": "gemini-flash"}, {"base_url": "https://a/v1"}).mode == "chat"
+    Settings(audio_mode="chat").validate()
+    with pytest.raises(ValueError, match="AUDIO_MODE"):
+        Settings(audio_mode="whisper").validate()

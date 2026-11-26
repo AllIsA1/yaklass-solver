@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from yaklass_bot.solver.audio import MODES as AUDIO_MODES
+
 
 def load_dotenv(path: str | os.PathLike | None = None) -> Path | None:
     """Читает KEY=VALUE из .env (путь: аргумент, ENV_FILE или ./.env). Уже заданные переменные окружения
@@ -167,7 +169,7 @@ class Settings:
             parse_mtproxy(self.mtproxy)               # ProxyError (ValueError) с понятным текстом
         if self.registration not in ("open", "invite", "closed"):
             raise ValueError("REGISTRATION должен быть open, invite или closed")
-        if self.audio_mode not in ("transcribe", "native", "off"):
-            raise ValueError("AUDIO_MODE должен быть transcribe, native или off")
+        if self.audio_mode not in AUDIO_MODES:
+            raise ValueError("AUDIO_MODE должен быть transcribe, chat, native или off")
         if self.search_mode not in ("always", "model", "off"):
             raise ValueError("SEARCH_MODE должен быть always, model или off")

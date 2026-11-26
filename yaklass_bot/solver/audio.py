@@ -2,6 +2,8 @@
 
 transcribe — расшифровка через OpenAI-совместимый /audio/transcriptions (Whisper и аналоги), текст идёт в промпт;
              работает с любой основной моделью.
+chat       — расшифровку делает отдельная модель, понимающая звук (Gemini и т.п.), через chat/completions с input_audio;
+             текст идёт в промпт основной модели, которой звук понимать не нужно.
 native     — mp3 прикладывается к запросу chat/completions как input_audio; нужна модель, понимающая звук
              (Gemini, gpt-4o-audio и т.п.).
 off        — задания с аудио не решаются (AudioUnsupported).
@@ -21,7 +23,8 @@ import requests
 from ..models import Task
 from .base import ProviderUnavailable, SolveError
 
-MODES = ("transcribe", "native", "off")
+MODES = ("transcribe", "chat", "native", "off")
+TRANSCRIBE_MODES = ("transcribe", "chat")      # записи превращаются в текст для основной модели
 MAX_BYTES = 25 * 1024 * 1024          # предел OpenAI /audio/transcriptions; уроки ЯКласса — единицы мегабайт
 MAX_CLIPS = 4
 TIMEOUT = (10, 180)
@@ -127,6 +130,34 @@ class Transcriber:
         return str(text).strip()
 
 
+CHAT_PROMPT = ("Transcribe this audio recording verbatim, in the language it is spoken in. Do not translate, "
+               "summarize or comment. Output only the transcript text. If there are several speakers, start each "
+               "line with the speaker's name or role if it is clear, otherwise with a dash.")
+
+
+class ChatTranscriber:
+    """Расшифровка моделью со звуком: POST {base_url}/chat/completions, запись — input_audio (Gemini и т.п.)."""
+
+    def __init__(self, base_url: str, model: str, api_key: str = ""):
+        self.base_url, self.model, self.key = base_url, model, api_key
+        self._provider = None
+
+    def transcribe(self, clip: Audio, language: str = "") -> str:
+        from .api import ApiProvider                     # api.py сам импортирует этот модуль
+        if self._provider is None:
+            self._provider = ApiProvider({"base_url": self.base_url, "model": self.model, "api_key": self.key,
+                                          "api_key_env": "", "vision": False, "json_mode": False,
+                                          "temperature": 0.0})
+        prompt = CHAT_PROMPT + (f" The language is {language}." if language else "")
+        try:
+            text = self._provider.ask(prompt, audio=[clip])
+        except ProviderUnavailable as e:
+            raise ProviderUnavailable(f"расшифровка недоступна: {e}") from e
+        except SolveError as e:
+            raise SolveError(f"расшифровка: {e}") from e
+        return str(text).strip()
+
+
 @dataclass
 class AudioConf:
     mode: str = "transcribe"
@@ -156,8 +187,9 @@ class AudioHelper:
         self.transcriber = transcriber
         # сервис расшифровки ответил 404/405 — дальше (пока жив объект) сразу native, без лишних запросов к STT
         self.stt_missing = False
-        if self.transcriber is None and conf.mode == "transcribe" and conf.base_url:
-            self.transcriber = Transcriber(conf.base_url, conf.model, conf.api_key)
+        if self.transcriber is None and conf.mode in TRANSCRIBE_MODES and conf.base_url:
+            cls = ChatTranscriber if conf.mode == "chat" else Transcriber
+            self.transcriber = cls(conf.base_url, conf.model, conf.api_key)
 
     @property
     def mode(self) -> str:
@@ -180,6 +212,8 @@ class AudioHelper:
         """Копия задания с заполненным audio_text."""
         if self.transcriber is None:
             raise AudioUnsupported("не задан адрес сервиса расшифровки аудио")
+        if self.conf.mode == "chat" and (not self.conf.model or self.conf.model.lower().startswith("whisper")):
+            raise AudioUnsupported("для расшифровки моделью со звуком укажите её в «Модель расшифровки» (например, gemini-…)")
         texts, clips = [], self._clips(task)
         for i, clip in enumerate(clips, 1):
             try:

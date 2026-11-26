@@ -193,11 +193,12 @@ class SettingRow(QWidget):
         t.setObjectName("rowTitle")
         t.setWordWrap(True)
         text.addWidget(t)
+        self.hint = None
         if hint:
-            h = QLabel(hint)
-            h.setObjectName("hint")
-            h.setWordWrap(True)
-            text.addWidget(h)
+            self.hint = QLabel(hint)
+            self.hint.setObjectName("hint")
+            self.hint.setWordWrap(True)
+            text.addWidget(self.hint)
         lay.addLayout(text, 1)
         if control is not None:
             if control_width:
@@ -208,6 +209,10 @@ class SettingRow(QWidget):
                 lay.addWidget(control, 0, Qt.AlignVCenter | Qt.AlignRight)
         if isinstance(control, Toggle):
             self.setCursor(Qt.PointingHandCursor)
+
+    def set_hint(self, hint: str) -> None:
+        if self.hint is not None:
+            self.hint.setText(hint)
 
     def mouseReleaseEvent(self, e) -> None:  # noqa: N802
         if isinstance(self.control, Toggle) and self.control.isEnabled() and e.button() == Qt.LeftButton:
