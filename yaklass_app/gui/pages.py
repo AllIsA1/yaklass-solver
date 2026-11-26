@@ -746,7 +746,7 @@ class SettingsPage(Page):
         self.stt_model.setPlaceholderText("gemini-3-pro" if chat else "whisper-1")
         self.stt_rows[0].set_hint("OpenAI-совместимый chat/completions; модель должна понимать звук (Gemini)" if chat else
                                   "OpenAI-совместимый /audio/transcriptions. Например, Groq: https://api.groq.com/openai/v1")
-        self.stt_rows[1].set_hint("Например, gemini-3-pro; основной модели звук понимать не нужно" if chat else
+        self.stt_rows[1].set_hint("Например, gemini-3-pro. Можно несколько через запятую — запасные, если первая недоступна" if chat else
                                   "whisper-1 (OpenAI), whisper-large-v3 (Groq)…")
 
     def _toggle_cookie(self):

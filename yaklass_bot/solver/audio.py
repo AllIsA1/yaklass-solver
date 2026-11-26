@@ -30,6 +30,8 @@ TRANSCRIBE_MODES = ("transcribe", "chat")      # записи превращаю
 MAX_BYTES = 25 * 1024 * 1024          # предел OpenAI /audio/transcriptions; уроки ЯКласса — единицы мегабайт
 MAX_CLIPS = 4
 TIMEOUT = (10, 180)
+CHAT_TIMEOUT = (15, 240)              # модели со звуком через посредников отвечают до пары минут
+CHAT_RETRIES = 5                      # попыток на модель при 429/5xx: паузы 3, 6, 12, 24 с — около 45 с ожидания
 # формат по content-type / расширению -> имя для input_audio и для имени файла в multipart
 FORMATS = {"audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
            "audio/ogg": "ogg", "audio/webm": "webm", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "aac",
@@ -186,13 +188,17 @@ class ChatTranscriber:
     """Расшифровка моделью со звуком: POST {base_url}/chat/completions с вложенной записью (Gemini и т.п.).
     Вложить запись можно двумя способами, и посредники понимают по-разному: data:audio/… в image_url (так звук
     доходит до Gemini через большинство посредников) и input_audio (формат OpenAI). Пробуем по очереди и
-    запоминаем способ, который сработал."""
+    запоминаем способ, который сработал.
+    model может быть списком через запятую: следующая модель — запасная, если предыдущая недоступна, не приняла
+    запись или оборвала расшифровку (посредники часто отдают 503 на одну модель, пока другая работает)."""
 
     WAYS = ("data_url", "input_audio")
 
-    def __init__(self, base_url: str, model: str, api_key: str = "", retries: int = 3, pause: float = 3.0):
+    def __init__(self, base_url: str, model: str, api_key: str = "", retries: int = CHAT_RETRIES, pause: float = 3.0):
         self.url = base_url.rstrip("/") + "/chat/completions"
-        self.model, self.key = model, api_key
+        self.models = [m.strip() for m in model.split(",") if m.strip()] or [model]
+        self.model, self.key = self.models[0], api_key
+        self.used = ""                                # модель, которая расшифровала последнюю запись
         self.retries, self.pause = retries, pause
         self.way: str | None = None                   # способ, который уже сработал
 
@@ -201,9 +207,9 @@ class ChatTranscriber:
         last = ""
         for attempt in range(self.retries):
             if attempt:
-                time.sleep(self.pause * attempt)
+                time.sleep(self.pause * 2 ** (attempt - 1))
             try:
-                r = requests.post(self.url, headers=headers, json=body, timeout=TIMEOUT)
+                r = requests.post(self.url, headers=headers, json=body, timeout=CHAT_TIMEOUT)
             except requests.RequestException as e:
                 last = e.__class__.__name__
                 continue
@@ -235,6 +241,21 @@ class ChatTranscriber:
         return len(text.split()) < 60 and any(p in low for p in NO_AUDIO)
 
     def transcribe(self, clip: Audio, language: str = "") -> str:
+        errors, unavailable = [], True
+        for model in self.models:
+            self.model = model
+            try:
+                text = self._transcribe_one(clip, language)
+            except SolveError as e:
+                unavailable = unavailable and isinstance(e, ProviderUnavailable)
+                errors.append(f"{model}: {e}" if len(self.models) > 1 else str(e))
+                continue
+            self.used = model
+            return text
+        msg = "; ".join(errors)
+        raise ProviderUnavailable(msg) if unavailable else SolveError(msg)
+
+    def _transcribe_one(self, clip: Audio, language: str) -> str:
         ways = [self.way] if self.way else list(self.WAYS)
         errors = []
         for how in ways:
@@ -262,7 +283,8 @@ class ChatTranscriber:
             return again
         best = max(text, again if code == 200 else "", key=lambda t: len(t.split()))
         raise SolveError(f"расшифровка оборвалась: {len(best.split())} слов на {secs:.0f} с записи — модель "
-                         f"{self.model} обрывает ответ на звуке, выберите другую (например, gemini-3-pro)")
+                         f"{self.model} обрывает ответ на звуке" + ("" if len(self.models) > 1 else
+                         ", выберите другую или добавьте запасную через запятую (например, gemini-3-pro)"))
 
 
 @dataclass
@@ -319,7 +341,7 @@ class AudioHelper:
         """Копия задания с заполненным audio_text."""
         if self.transcriber is None:
             raise AudioUnsupported("не задан адрес сервиса расшифровки аудио")
-        if self.conf.mode == "chat" and (not self.conf.model or self.conf.model.lower().startswith("whisper")):
+        if self.conf.mode == "chat" and (not self.conf.model or "whisper" in self.conf.model.lower()):
             raise AudioUnsupported("для расшифровки моделью со звуком укажите её в «Модель расшифровки» (например, gemini-…)")
         texts, clips = [], self._clips(task)
         for i, clip in enumerate(clips, 1):
@@ -332,7 +354,8 @@ class AudioHelper:
                 raise AudioUnsupported(f"аудиозапись №{i} не расшифрована: {e}") from e
             if not text:
                 raise AudioUnsupported(f"расшифровка аудиозаписи №{i} пустая")
-            log(f"  аудио №{i}: расшифровано {len(text)} симв.")
+            used = getattr(self.transcriber, "used", "")
+            log(f"  аудио №{i}: расшифровано {len(text)} симв." + (f" ({used})" if used else ""))
             texts.append(text)
         return dataclasses.replace(task, audio_text=texts)
 

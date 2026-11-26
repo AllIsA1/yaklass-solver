@@ -364,10 +364,12 @@ def test_chat_rejected_attachment_tries_other_way(chat):
     assert [fake.way(0), fake.way(1)] == ["image_url", "input_audio"]
 
 
-def test_chat_retries_temporary_errors(chat):
-    fake = chat((503, "Temporary error"), (503, "Temporary error"), (200, SPEECH))
+def test_chat_retries_temporary_errors_with_growing_pauses(chat, monkeypatch):
+    pauses = []
+    monkeypatch.setattr(audio_mod.time, "sleep", pauses.append)
+    fake = chat(*[(503, "Temporary error")] * 4, (200, SPEECH))
     assert audio_mod.ChatTranscriber("https://gw.invalid/v1", "g").transcribe(Audio(b"x", "mp3")) == SPEECH
-    assert len(fake.bodies) == 3
+    assert len(fake.bodies) == 5 and pauses == [3, 6, 12, 24]
 
 
 def test_chat_truncated_transcript_is_retried_then_rejected(chat):
@@ -379,6 +381,31 @@ def test_chat_truncated_transcript_is_retried_then_rejected(chat):
         audio_mod.ChatTranscriber("https://gw.invalid/v1", "gemini-3.8-flash").transcribe(clip)
 
 
+def test_chat_fallback_models_on_outage_and_truncation(chat):
+    """Список моделей через запятую: 503 у первой (после повторов) и обрыв у второй — расшифровывает третья."""
+    clip = Audio(mp3(30), "mp3")
+    fake = chat(*[(503, "Temporary error")] * 5, (200, "This is"), (200, "This is"), (200, SPEECH + " " + SPEECH))
+    t = audio_mod.ChatTranscriber("https://gw.invalid/v1", "gemini-3-pro, gemini-3.8-flash ,gemini-3.1-pro")
+    assert t.transcribe(clip).startswith("Front left") and t.used == "gemini-3.1-pro"
+    assert [b["model"] for b in fake.bodies] == ["gemini-3-pro"] * 5 + ["gemini-3.8-flash"] * 2 + ["gemini-3.1-pro"]
+
+
+def test_chat_all_models_down_is_unavailable_with_each_reason(chat):
+    chat(*[(503, "Temporary error")] * 10)
+    t = audio_mod.ChatTranscriber("https://gw.invalid/v1", "a,b")
+    with pytest.raises(audio_mod.ProviderUnavailable, match="a: расшифровка недоступна.*; b: расшифровка недоступна"):
+        t.transcribe(Audio(b"x", "mp3"))
+
+
+def test_helper_logs_which_fallback_model_transcribed(chat):
+    chat(*[(503, "e")] * 5, (200, SPEECH))
+    helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="gemini-3-pro,gemini-3.1-pro"),
+                         loader=loader)
+    logs = []
+    solve(Config(), Model(), task(), log=logs.append, audio=helper)
+    assert any("(gemini-3.1-pro)" in s for s in logs)
+
+
 def test_mp3_seconds():
     assert audio_mod.mp3_seconds(mp3(20)) == pytest.approx(20, abs=0.01)
     id3 = b"ID3\x04\x00\x00\x00\x00\x00\x0a" + b"\0" * 10
@@ -388,7 +415,7 @@ def test_mp3_seconds():
 
 @pytest.mark.parametrize("code", [401, 404, 500])
 def test_chat_mode_errors_are_audio_unsupported_without_native_fallback(chat, code):
-    chat(*[(code, "nope")] * 3)
+    chat(*[(code, "nope")] * 5)
     m = Model()
     helper = AudioHelper(AudioConf(mode="chat", base_url="https://gw.invalid/v1", model="g"), loader=loader)
     with pytest.raises(AudioUnsupported, match=f"расшифров.*API {code}"):
