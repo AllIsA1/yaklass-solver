@@ -134,10 +134,16 @@ class LocalSolver:
         a = dict(s.own_api)
         a["api_key"], a["api_key_env"] = api_key, ""
         self.provider = ApiProvider(a)
-        stt_url = str(a.get("stt_base_url", "") or "").strip()
+        stt_url = str(a.get("stt_base_url", "") or "").strip().rstrip("/")
+        # ключ отправляем только своему адресу: без адреса STT — ключ API на адрес API; с адресом — ключ STT
+        # (ключ API — лишь если адрес STT совпадает с адресом API)
+        if not stt_url:
+            key = api_key
+        else:
+            key = stt_key or (api_key if stt_url == str(a["base_url"]).rstrip("/") else "")
         self.audio = AudioHelper(AudioConf(
             mode=str(a.get("audio_mode", "transcribe")), base_url=stt_url or a["base_url"],
-            model=str(a.get("stt_model", "") or "whisper-1"), api_key=stt_key or api_key))
+            model=str(a.get("stt_model", "") or "whisper-1"), api_key=key))
         self.cfg = Config()
         self.cfg.searxng_url = s.searxng_url.rstrip("/")
         self.cfg.search_mode = s.search_mode

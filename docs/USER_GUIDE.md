@@ -51,7 +51,7 @@ yaklass-app
    - **Адрес API** — любой OpenAI-совместимый (`…/v1`):
      | Сервис | Адрес | Пример модели |
      |---|---|---|
-     | OpenAI | `https://api.opencomcom/v1` | `gpt-4o-mini` |
+     | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
      | DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
      | OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini` |
      | Ollama (на этом ПК) | `http://localhost:11434/v1` | модель, которую вы скачали |

@@ -93,7 +93,7 @@ def test_transcribe_puts_transcript_into_prompt():
     helper = AudioHelper(AudioConf(mode="transcribe", base_url="https://stt.invalid/v1"), loader=loader, transcriber=stt)
     ans = solve(Config(), m, task(), log=lambda s: None, audio=helper)
     assert ans.values == {"e8r1|ta": "country", "e9r2|ta": "country", "e10r3|ta": "country"}
-    assert stt.calls[0][1] == "en"                                   # английское задание — язык подсказан Whisper
+    assert stt.calls[0][1] == ""                                     # язык записи Whisper определяет сам
     p = m.prompts[0]
     assert "Daniel wants to visit every country." in p and "аудирование" in p
     assert m.audio == [[]]                                           # сам звук модели не отправляется
@@ -216,4 +216,33 @@ def test_download_rejects_non_audio_and_oversize(monkeypatch):
     monkeypatch.setattr(audio_mod.requests, "get", lambda *a, **k: R("audio/mpeg", b"x" * (audio_mod.MAX_BYTES + 1)))
     assert audio_mod.download("https://x/a.mp3") is None
     monkeypatch.setattr(audio_mod.requests, "get", lambda *a, **k: R("audio/mpeg", b"ID3"))
+    assert audio_mod.download("https://x/a.mp3") == Audio(b"ID3", "mp3")
+
+
+@pytest.mark.parametrize("stt_url, stt_key, want", [
+    ("", "", "sk-main"),                                       # расшифровка там же, где модель: ключ модели
+    ("", "gsk-old", "sk-main"),                                # старый ключ STT на адрес модели не уходит
+    ("https://api.groq.com/openai/v1", "gsk", "gsk"),
+    ("https://api.groq.com/openai/v1", "", ""),                # ключ модели на чужой адрес не уходит
+])
+def test_app_never_sends_key_to_foreign_host(stt_url, stt_key, want):
+    from yaklass_app.settings import AppSettings
+    from yaklass_app.solvers import LocalSolver
+    s = AppSettings(solver_mode="own")
+    s.own_api = {**s.own_api, "stt_base_url": stt_url}
+    assert LocalSolver(s, "sk-main", stt_key).audio.conf.api_key == want
+
+
+def test_download_accepts_s3_octet_stream(monkeypatch):
+    class R:
+        headers = {"content-type": "binary/octet-stream"}
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def raise_for_status(self):
+            pass
+        def iter_content(self, n):
+            yield b"ID3"
+    monkeypatch.setattr(audio_mod.requests, "get", lambda *a, **k: R())
     assert audio_mod.download("https://x/a.mp3") == Audio(b"ID3", "mp3")

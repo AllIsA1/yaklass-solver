@@ -28,6 +28,7 @@ FORMATS = {"audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav", "audio/x
            "audio/flac": "flac"}
 # начало detail ответа 422 сервера на /v1/solve, когда задание с аудио решить нечем (клиент -> AudioUnsupported)
 REMOTE_PREFIX = "аудирование: "
+NOT_AUDIO = ("text/", "image/", "application/json", "application/xml", "application/xhtml")
 EXTS = {"mp3", "wav", "ogg", "oga", "webm", "m4a", "mp4", "aac", "flac"}
 
 
@@ -59,7 +60,7 @@ def download(url: str, allow_redirects: bool = True) -> Audio | None:
             r.raise_for_status()
             mime = r.headers.get("content-type", "").split(";")[0].strip().lower()
             fmt = _format(url, mime)
-            if not fmt or (mime and not mime.startswith(("audio/", "application/octet-stream", "video/mp4"))):
+            if not fmt or mime.startswith(NOT_AUDIO):
                 return None
             chunks, size = [], 0
             for chunk in r.iter_content(64 * 1024):

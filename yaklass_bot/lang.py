@@ -5,7 +5,7 @@ import re
 
 from .models import Task
 
-_FIELD = re.compile(r"\[\[[^\]]*\]\]|\[IMG:[^\]]*\]")
+_FIELD = re.compile(r"\[\[[^\]]*\]\]|\[IMG:[^\]]*\]|\[AUDIO:\d+\]")
 _LATIN = re.compile(r"[A-Za-z]")
 _CYR = re.compile(r"[А-Яа-яЁё]")
 

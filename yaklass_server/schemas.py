@@ -33,7 +33,7 @@ class TaskIn(BaseModel):
     text: str = Field(max_length=20_000)
     fields: list[FieldIn] = Field(min_length=1, max_length=60)
     images: list[str] = Field(default_factory=list, max_length=12)
-    audio: list[str] = Field(default_factory=list, max_length=4)     # URL аудиозаписей (аудирование)
+    audio: list[str] = Field(default_factory=list, max_length=12)   # больше 4 решатель пропустит сам     # URL аудиозаписей (аудирование)
     has_audio: bool = False                                          # аудио есть, даже если ссылку не нашли
 
     def to_task(self) -> Task:

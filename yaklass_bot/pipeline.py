@@ -27,7 +27,7 @@ def prepare_audio(cfg: Config, provider: Provider, task: Task, log: Callable[[st
         clips = helper.clips(task)
         log(f"  аудио: {len(clips)} запис(ь/и) приложено к запросу")
         return task, clips
-    return helper.transcribed(task, "en" if is_english(task) else "", log), []
+    return helper.transcribed(task, log=log), []
 
 
 def solve(cfg: Config, provider: Provider, task: Task, log: Callable[[str], None] = print,
