@@ -6,7 +6,9 @@ from urllib.parse import urlparse
 from yaklass_bot.config import Config
 from yaklass_bot.models import Task
 from yaklass_bot.pipeline import solve as pipeline_solve
+from yaklass_bot.solver import audio as audio_mod
 from yaklass_bot.solver.api import ApiProvider
+from yaklass_bot.solver.audio import AudioConf, AudioHelper
 from yaklass_bot.solver.base import Answer, Provider
 from yaklass_bot.solver.images import Image, download
 from yaklass_bot.solver.research import _is_public
@@ -16,7 +18,7 @@ from .settings import Settings
 
 
 def image_allowed(url: str, hosts: tuple[str, ...]) -> bool:
-    """Сервер скачивает только https с доменов из белого списка и публичных адресов
+    """Сервер скачивает (картинки и аудио) только https с доменов из белого списка и публичных адресов
     (иначе клиент мог бы заставить сервер ходить во внутреннюю сеть — SSRF)."""
     u = urlparse(url)
     host = (u.hostname or "").lower()
@@ -34,6 +36,9 @@ class SolverService:
         self.cfg = Config()
         self.cfg.searxng_url = s.searxng_url
         self.cfg.search_mode = s.search_mode
+        self.audio = AudioHelper(AudioConf(
+            mode=s.audio_mode, base_url=s.stt_base_url or s.llm_base_url, model=s.stt_model,
+            api_key=s.stt_api_key or ("" if s.stt_base_url else s.llm_api_key)), loader=self._load_audio)
 
     @staticmethod
     def _build_provider(s: Settings) -> Provider:
@@ -54,5 +59,9 @@ class SolverService:
     def _load_image(self, url: str) -> Image | None:
         return download(url, allow_redirects=False) if image_allowed(url, self.s.image_hosts) else None
 
+    def _load_audio(self, url: str) -> audio_mod.Audio | None:
+        return audio_mod.download(url, allow_redirects=False) if image_allowed(url, self.s.image_hosts) else None
+
     def solve(self, task: Task) -> Answer:
-        return pipeline_solve(self.cfg, self.provider, task, log=lambda m: None, image_loader=self._load_image)
+        return pipeline_solve(self.cfg, self.provider, task, log=lambda m: None, image_loader=self._load_image,
+                              audio=self.audio)

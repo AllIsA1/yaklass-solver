@@ -390,7 +390,7 @@ class Agent:
         if self.state != "idle":
             return False, "Уже выполняется другая работа"
         try:
-            solver = solvers.make_solver(s, self.store.token, self.store.own_api_key)
+            solver = solvers.make_solver(s, self.store.token, self.store.own_api_key, self.store.own_stt_key)
         except (FatalSolveError, SolveError) as e:
             return False, str(e)
         except Exception as e:  # noqa: BLE001
@@ -460,7 +460,7 @@ class Agent:
         if self.model_test_running:
             return False, "Тест уже идёт"
         try:
-            solver = solvers.make_solver(s, self.store.token, self.store.own_api_key)
+            solver = solvers.make_solver(s, self.store.token, self.store.own_api_key, self.store.own_stt_key)
         except Exception as e:  # noqa: BLE001
             return False, f"Не удалось подготовить решатель: {e}"
         stop = threading.Event()

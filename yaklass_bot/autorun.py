@@ -31,6 +31,7 @@ from .presence import install as install_presence
 from .runner import choose_work, handle_preview, resolve_url, wait_page_ready
 from .session import DEFAULT_UA, load_cookies, to_playwright_cookies
 from .solver import FatalSolveError, SolveError, make_provider
+from .solver.audio import AudioUnsupported
 from .solver.base import Answer
 from .stealth import RunStyle, Stealth, corrupt
 from .useragent import build_user_agent
@@ -199,7 +200,7 @@ def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool 
     if not task.supported:
         if stealth:
             stealth.planner.observe(task)
-        return Outcome(**base, status="unsupported", note="аудио или нет полей ответа")
+        return Outcome(**base, status="unsupported", note="нет полей ответа")
     if task.time_left_s is not None and task.time_left_s < MIN_SECONDS_LEFT:
         return Outcome(**base, status="timeout", note=f"осталось {task.time_left_s} с")
     if page.locator(REWRITE_BTN).count():
@@ -220,6 +221,10 @@ def do_task(page, solve_fn: SolveFn, table, key: str, log: Log, *, submit: bool 
         answer = current_call(lambda: solve_fn(task, log))     # курсор «на задании», пока модель думает
     except FatalSolveError:
         raise
+    except AudioUnsupported as e:
+        if stealth:
+            stealth.planner.commit(plan, None)
+        return Outcome(**base, status="unsupported", note=f"аудирование: {e}")
     except SolveError as e:
         if stealth:
             stealth.planner.commit(plan, None)

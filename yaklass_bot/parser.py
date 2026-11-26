@@ -108,7 +108,17 @@ def _abs(src: str) -> str:
     return "https:" + src if src.startswith("//") else src
 
 
-def _render(node, out: list[str], images: list[str]) -> None:
+def _audio_src(el: Tag) -> str:
+    """<audio src> или первый <source src> внутри."""
+    src = el.get("src") or ""
+    if not src:
+        s = el.find("source", src=True)
+        src = s["src"] if s is not None else ""
+    return _abs(src.strip()) if src.strip() else ""
+
+
+def _render(node, out: list[str], images: list[str], audio: list[str] | None = None) -> None:
+    audio = audio if audio is not None else []
     for ch in node.children:
         if isinstance(ch, Comment):
             continue
@@ -137,21 +147,26 @@ def _render(node, out: list[str], images: list[str]) -> None:
         elif name == "img":
             images.append(_abs(ch.get("src", "")))
             out.append(f" [IMG:{ch.get('alt', '')}] ")
+        elif name == "audio":
+            src = _audio_src(ch)
+            if src:
+                audio.append(src)
+                out.append(f"\n[AUDIO:{len(audio)}]\n")
         elif name in ("meta", "script", "style"):
             continue
         elif name in ("td", "th"):
-            out.append(f" {_inline(ch, images)} |")
+            out.append(f" {_inline(ch, images, audio)} |")
         else:
             if name in BLOCK_TAGS:
                 out.append("\n")
-            _render(ch, out, images)
+            _render(ch, out, images, audio)
             if name in BLOCK_TAGS:
                 out.append("\n")
 
 
-def _inline(node: Tag, images: list[str] | None = None) -> str:
+def _inline(node: Tag, images: list[str] | None = None, audio: list[str] | None = None) -> str:
     out: list[str] = []
-    _render(node, out, images if images is not None else [])
+    _render(node, out, images if images is not None else [], audio)
     return re.sub(r"\s+", " ", "".join(out).replace("\xa0", " ")).strip()
 
 
@@ -315,7 +330,8 @@ def parse_exercise(html: str) -> Task:
 
     out: list[str] = []
     images: list[str] = []
-    _render(wrapper, out, images)
+    audio: list[str] = []
+    _render(wrapper, out, images, audio)
     text = re.sub(r"[ \t]+", " ", "".join(out))
     text = re.sub(r"\n\s*\n+", "\n", text).strip()
     # LaTeX-вставки \(AB\) оставляем как есть: LLM их понимает
@@ -342,7 +358,8 @@ def parse_exercise(html: str) -> Task:
         text=text,
         fields=_collect_fields(wrapper),
         images=images,
-        has_audio=bool(wrapper.select("audio, [class*=audio]")),
+        has_audio=bool(audio) or bool(wrapper.select("audio, [class*=audio]")),
+        audio=audio,
         form_action=form["action"] if form else "",
         time_left_s=_int(timer.get("data-left-time")) if timer else None,
         is_theory=page_kind(html) == "theory",

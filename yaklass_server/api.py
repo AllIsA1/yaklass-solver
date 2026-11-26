@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from yaklass_bot.solver.audio import REMOTE_PREFIX as AUDIO_PREFIX
+from yaklass_bot.solver.audio import AudioUnsupported
 from yaklass_bot.solver.base import SolveError
 
 from . import security
@@ -108,6 +110,9 @@ def create_app(settings: Settings, db: Db, hub: Hub, solver: SolverService) -> F
         try:
             async with sem:
                 ans = await asyncio.to_thread(solver.solve, task)
+        except AudioUnsupported as e:
+            db.end_failed_solve(p.tg_id, req.run_id, new_run)
+            raise HTTPException(422, f"{AUDIO_PREFIX}{e}") from e
         except SolveError as e:
             db.end_failed_solve(p.tg_id, req.run_id, new_run)     # не по вине пользователя — не списываем
             raise HTTPException(502, f"модель не дала ответа: {e}") from e

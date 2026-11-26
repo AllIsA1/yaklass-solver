@@ -5,7 +5,9 @@ const ATTEMPTS = 4, BACKOFF_S = 3;
 
 export class SolveError extends Error {}
 export class FatalSolveError extends SolveError {}            // продолжать бессмысленно: лимит, отвязан, сервер недоступен
+export class AudioUnsupported extends SolveError {}           // задание с аудио, а сервер слушать не может — пропуск
 export class LinkError extends Error {}
+const AUDIO_PREFIX = "аудирование: ";                        // = REMOTE_PREFIX в yaklass_bot/solver/audio.py
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const detailOf = async (r) => { try { const d = (await r.json()).detail; return typeof d === "string" ? d : ""; } catch (e) { return ""; } };
@@ -31,6 +33,7 @@ export async function me(serverUrl, token) {
 
 export function serializeTask(task) {
   return { position: task.position, title: task.title, points: task.points, text: task.text, images: task.images,
+           audio: task.audio || [], has_audio: !!task.has_audio,
            fields: task.fields.map((f) => ({ name: f.name, kind: f.kind, max_points: f.max_points, size: f.size,
                                             options: f.options.map((o) => ({ value: o.value, text: o.text, image: o.image })) })) };
 }
@@ -64,6 +67,7 @@ export async function solve(serverUrl, token, task, runId, log = () => {}, sleep
       last = "слишком частые запросы";
       continue;
     }
+    if (r.status === 422 && detail.startsWith(AUDIO_PREFIX)) throw new AudioUnsupported(detail.slice(AUDIO_PREFIX.length));
     if (r.status === 413 || r.status === 422) throw new SolveError(`сервер отклонил задание: ${detail || r.status}`);
     if (TRANSIENT.includes(r.status)) {                                   // шлюз/прокси/сеть: повторить
       last = detail || `ошибка сервера ${r.status}`;

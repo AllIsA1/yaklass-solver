@@ -37,6 +37,9 @@ class Config:
         "api_key_env": "OPENAI_API_KEY", "temperature": 0.0,
         "json_mode": False})
     run: dict = field(default_factory=lambda: {"channel": "", "min_confidence": 0.5, "user_agent": ""})
+    # аудирование: transcribe | native | off; base_url/ключ пустые — как у [llm.api]
+    audio: dict = field(default_factory=lambda: {
+        "mode": "transcribe", "base_url": "", "model": "whisper-1", "api_key_env": "", "api_key_file": ""})
     searxng_url: str = ""
     search_results: int = 6
     search_mode: str = "always"      # always | model | off
@@ -64,6 +67,7 @@ class Config:
             print("Внимание: режим «ChatGPT через браузер» удалён — используется API. "
                   "Запустите `yaklass-bot setup`.", file=sys.stderr)
         cfg.api.update(llm.get("api", {}))
+        cfg.audio.update(llm.get("audio", {}))
         cfg.run.update(raw.get("run", {}))
         s = raw.get("search", {})
         cfg.searxng_url = s.get("searxng_url", "").rstrip("/")
@@ -93,6 +97,14 @@ class Config:
             f"api_key_env = {_t(a.get('api_key_env', ''))}", f"api_key_file = {_t(a.get('api_key_file', ''))}",
             f"temperature = {_t(a.get('temperature', 0.0))}", f"vision = {_t(a.get('vision', True))}",
             f"json_mode = {_t(a.get('json_mode', False))}",
+            "", "[llm.audio]",
+            "# аудирование: transcribe — расшифровка через /audio/transcriptions (Whisper), текст уходит модели;",
+            "# native — запись прикладывается к запросу (модель должна понимать звук: Gemini, gpt-4o-audio); off",
+            f"mode = {_t(self.audio.get('mode', 'transcribe'))}",
+            "# адрес и ключ сервиса расшифровки; пусто — как у [llm.api]. Пример Groq: https://api.groq.com/openai/v1",
+            f"base_url = {_t(self.audio.get('base_url', ''))}", f"model = {_t(self.audio.get('model', 'whisper-1'))}",
+            f"api_key_env = {_t(self.audio.get('api_key_env', ''))}",
+            f"api_key_file = {_t(self.audio.get('api_key_file', ''))}",
             "", "[run]", '# "" = встроенный Chromium Playwright; "chrome" / "msedge" = установленный браузер',
             f"channel = {_t(r.get('channel', ''))}", f"min_confidence = {_t(r.get('min_confidence', 0.5))}",
             "# User-Agent браузера (пусто = по умолчанию)", f"user_agent = {_t(r.get('user_agent', ''))}",

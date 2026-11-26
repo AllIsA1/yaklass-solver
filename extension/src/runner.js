@@ -1,6 +1,6 @@
 /* Выполнение работы во вкладке браузера пользователя. Порт yaklass_bot/autorun.py (обычный и быстрый режимы).
    Страницы ЯКласса перезагружаются на каждом задании, поэтому цикл живёт здесь, а на странице — только контент-скрипт. */
-import { FatalSolveError, SolveError, solve } from "./solver.js";
+import { AudioUnsupported, FatalSolveError, SolveError, solve } from "./solver.js";
 import { ask, loads, navigate, openTab, snap as takeSnap, waitLoadedAfter } from "./tabs.js";
 
 export const PACE = {
@@ -140,7 +140,7 @@ export class Runner {
       if (r.ok) await waitLoadedAfter(this.tabId, before, 8000);
       return { ...base, status: "theory", note: r.ok ? "отмечено «Прочитано»" : r.note };
     }
-    if (!task.fields.length || task.has_audio) return { ...base, status: "unsupported", note: "аудио или нет полей ответа" };
+    if (!task.fields.length) return { ...base, status: "unsupported", note: "нет полей ответа" };
     if (task.time_left_s !== null && task.time_left_s < MIN_SECONDS_LEFT) return { ...base, status: "timeout", note: `осталось ${task.time_left_s} с` };
     if (task.fields.some((f) => f.kind === "dnd")) return { ...base, status: "unsupported", note: "перетаскивание в расширении пока не поддерживается" };
     if (s.hasRewrite) this.env.log("  задание уже выполнено — перезаписываю ответ");
@@ -149,6 +149,7 @@ export class Runner {
     try { ans = await solve(cfg.serverUrl, cfg.token, task, runId, (m) => this.env.log(m)); }
     catch (e) {
       if (e instanceof FatalSolveError) throw e;
+      if (e instanceof AudioUnsupported) return { ...base, status: "unsupported", note: `аудирование: ${e.message}` };
       if (e instanceof SolveError) return { ...base, status: "failed", note: `нет ответа модели: ${e.message}` };
       throw e;
     }

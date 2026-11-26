@@ -195,3 +195,10 @@ def test_overview_without_answers_cannot_complete():
     html = html.replace("/TestWorkRun/CompleteTest", "/x")             # форма завершения есть только при полных ответах
     ov = parse_overview(html)
     assert not ov.can_complete and len(ov.unanswered) == 9
+
+
+def test_listening_task_has_audio():
+    t = parse_exercise(read("5. Listening"))
+    assert t.supported and t.has_audio and len(t.audio) == 1 and t.audio[0].endswith(".mp3")
+    assert t.audio[0].startswith("https://") and "[AUDIO:1]" in t.text
+    assert [f.name for f in t.fields] == ["e8r1|ta", "e9r2|ta", "e10r3|ta"]

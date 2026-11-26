@@ -33,6 +33,8 @@ class TaskIn(BaseModel):
     text: str = Field(max_length=20_000)
     fields: list[FieldIn] = Field(min_length=1, max_length=60)
     images: list[str] = Field(default_factory=list, max_length=12)
+    audio: list[str] = Field(default_factory=list, max_length=4)     # URL аудиозаписей (аудирование)
+    has_audio: bool = False                                          # аудио есть, даже если ссылку не нашли
 
     def to_task(self) -> Task:
         return Task(
@@ -40,7 +42,8 @@ class TaskIn(BaseModel):
             fields=[TaskField(name=f.name, kind=f.kind, max_points=f.max_points, size=f.size,
                               options=[TaskOption(o.value, o.text, o.image) for o in f.options])
                     for f in self.fields],
-            images=[u[:600] for u in self.images])
+            images=[u[:600] for u in self.images],
+            audio=[u[:600] for u in self.audio], has_audio=self.has_audio or bool(self.audio))
 
 
 class SolveRequest(BaseModel):

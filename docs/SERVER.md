@@ -39,6 +39,13 @@ sudo systemctl restart yaklass-solver && journalctl -u yaklass-solver -f
 `LLM_FALLBACK_COOLDOWN_S` секунд (по умолчанию 60). Состояние — в `GET /healthz` (поле `fallback`) и в журнале службы.
 Только для сервера: приложение со «Своим API» запасную модель не использует.
 
+**Аудирование.** `AUDIO_MODE=transcribe` (по умолчанию): запись скачивается сервером (только с `IMAGE_HOSTS`) и
+расшифровывается через `STT_BASE_URL` (пусто — `LLM_BASE_URL` и `LLM_API_KEY`), модель `STT_MODEL` (`whisper-1`).
+Если основная модель не у OpenAI, у её провайдера может не быть `/audio/transcriptions`: укажите отдельный сервис,
+например Groq (`STT_BASE_URL=https://api.groq.com/openai/v1`, `STT_MODEL=whisper-large-v3`, `STT_API_KEY=…`).
+`AUDIO_MODE=native` — запись уходит модели как `input_audio` (Gemini, `gpt-4o-audio-preview`). `off` — такие задания
+клиенты пропускают.
+
 ## Управление: `yaklassctl`
 Запускать из `/opt/yaklass-solver` (читает тот же `.env`/БД):
 ```bash

@@ -123,7 +123,7 @@ def process_page(page, cfg: Config, provider, auto_start: bool = True, delay: in
         print(f"\n«{task.title}» — теория, отвечать не на что. Листайте дальше.")
         return
     if not task.supported:
-        print(f"\n── Задание {task.position}: {task.title} ── пропуск (аудио или нет полей ответа)")
+        print(f"\n── Задание {task.position}: {task.title} ── пропуск (нет полей ответа)")
         return
     try:
         answer = solve(cfg, provider, task, log=lambda m: print(m, flush=True))

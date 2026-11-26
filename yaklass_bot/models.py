@@ -109,6 +109,8 @@ class Task:
     fields: list[Field]
     images: list[str]              # URL картинок (пока игнорируем)
     has_audio: bool = False
+    audio: list[str] = field(default_factory=list)   # URL аудиозаписей (аудирование), в порядке [AUDIO:n] в тексте
+    audio_text: list[str] = field(default_factory=list)   # расшифровки audio (заполняет решатель, парсер — нет)
     form_action: str = ""
     time_left_s: int | None = None
     is_theory: bool = False        # страница теории: отвечать нечего, просто листаем дальше
@@ -116,7 +118,9 @@ class Task:
 
     @property
     def supported(self) -> bool:
-        return bool(self.fields) and not self.has_audio and not self.is_theory
+        """Есть на что отвечать. Аудио не мешает: его слушает решатель (а если аудирование выключено —
+        он сообщит AudioUnsupported)."""
+        return bool(self.fields) and not self.is_theory
 
     @property
     def image_urls(self) -> list[str]:

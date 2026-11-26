@@ -567,6 +567,7 @@ class SettingsPage(Page):
     saved = Signal(object)                    # AppSettings
     check_updates_requested = Signal()
     key_changed = Signal(str)                 # новый ключ своего API
+    stt_key_changed = Signal(str)             # новый ключ сервиса расшифровки аудио
 
     def __init__(self):
         super().__init__("Настройки", "Изменения применяются после нажатия «Сохранить»")
@@ -608,6 +609,25 @@ class SettingsPage(Page):
         self.search_mode.addItem("Искать перед каждым ответом", "always")
         self.search_mode.addItem("Модель решает сама", "model")
         self.search_mode.addItem("Не искать", "off")
+        self.audio_mode = QComboBox()
+        self.audio_mode.addItem("Расшифровывать (Whisper)", "transcribe")
+        self.audio_mode.addItem("Отправлять звук модели", "native")
+        self.audio_mode.addItem("Пропускать такие задания", "off")
+        self.audio_mode.currentIndexChanged.connect(self._toggle_audio)
+        self.stt_url = QLineEdit()
+        self.stt_url.setPlaceholderText("пусто — как адрес API")
+        self.stt_model = QLineEdit()
+        self.stt_model.setPlaceholderText("whisper-1")
+        self.stt_key = QLineEdit()
+        self.stt_key.setEchoMode(QLineEdit.Password)
+        self.stt_rows = [
+            SettingRow("Адрес расшифровки", self.stt_url,
+                       "OpenAI-совместимый /audio/transcriptions. Например, Groq: https://api.groq.com/openai/v1",
+                       control_width=W),
+            SettingRow("Модель расшифровки", self.stt_model, "whisper-1 (OpenAI), whisper-large-v3 (Groq)…",
+                       control_width=W),
+            SettingRow("Ключ расшифровки", self.stt_key, "Нужен, только если адрес расшифровки другой. "
+                       "Пусто — оставить прежний.", control_width=W)]
         for i, r in enumerate((
                 SettingRow("Адрес API", self.api_url, "OpenAI-совместимый: OpenAI, DeepSeek, OpenRouter, Ollama, LM Studio…",
                            control_width=W),
@@ -616,6 +636,10 @@ class SettingsPage(Page):
                            control_width=W),
                 SettingRow("Модель понимает картинки", self.api_vision, "vision"),
                 SettingRow("Режим JSON", self.api_json, "response_format = json_object"),
+                SettingRow("Аудирование", self.audio_mode,
+                           "Задания с аудиозаписью. «Отправлять звук» — только для моделей, понимающих аудио "
+                           "(Gemini, gpt-4o-audio).", control_width=W),
+                *self.stt_rows,
                 SettingRow("SearXNG", self.searx, "Поиск по интернету перед ответом", control_width=W),
                 SettingRow("Поиск", self.search_mode, control_width=W))):
             ol.addWidget(divider())
@@ -713,6 +737,10 @@ class SettingsPage(Page):
     def _toggle_own(self):
         self.own.setVisible(self.mode_own.isChecked())
 
+    def _toggle_audio(self):
+        for r in self.stt_rows:
+            r.setVisible(self.audio_mode.currentData() == "transcribe")
+
     def _toggle_cookie(self):
         self.cookie_row.setVisible(self.bmode.currentData() == "cookies")
 
@@ -721,7 +749,7 @@ class SettingsPage(Page):
         i = box.findData(data)
         box.setCurrentIndex(i if i >= 0 else 0)
 
-    def load(self, s: AppSettings, has_key: bool):
+    def load(self, s: AppSettings, has_key: bool, has_stt_key: bool = False):
         self._base = s
         self.device.setText(s.device_name)
         (self.mode_own if s.solver_mode == "own" else self.mode_server).setChecked(True)
@@ -732,6 +760,12 @@ class SettingsPage(Page):
         self.api_key.setPlaceholderText("•••••••• сохранён" if has_key else "sk-…")
         self.api_vision.setChecked(bool(a.get("vision", True)))
         self.api_json.setChecked(bool(a.get("json_mode", False)))
+        self._set_combo(self.audio_mode, a.get("audio_mode", "transcribe"))
+        self.stt_url.setText(a.get("stt_base_url", ""))
+        self.stt_model.setText(a.get("stt_model", "whisper-1"))
+        self.stt_key.clear()
+        self.stt_key.setPlaceholderText("•••••••• сохранён" if has_stt_key else "как ключ API")
+        self._toggle_audio()
         self.searx.setText(s.searxng_url)
         self._set_combo(self.search_mode, s.search_mode)
         p = s.pace_obj()
@@ -760,7 +794,9 @@ class SettingsPage(Page):
         s.device_name = self.device.text().strip() or s.device_name
         s.solver_mode = "own" if self.mode_own.isChecked() else "server"
         s.own_api = {**s.own_api, "base_url": self.api_url.text().strip(), "model": self.api_model.text().strip(),
-                     "vision": self.api_vision.isChecked(), "json_mode": self.api_json.isChecked()}
+                     "vision": self.api_vision.isChecked(), "json_mode": self.api_json.isChecked(),
+                     "audio_mode": self.audio_mode.currentData(), "stt_base_url": self.stt_url.text().strip().rstrip("/"),
+                     "stt_model": self.stt_model.text().strip() or "whisper-1"}
         s.searxng_url = self.searx.text().strip().rstrip("/")
         s.search_mode = self.search_mode.currentData()
         s.pace = {"between_tasks": [self.p_between[0].value(), self.p_between[1].value()],
@@ -792,6 +828,10 @@ class SettingsPage(Page):
             self.key_changed.emit(self.api_key.text().strip())
             self.api_key.clear()
             self.api_key.setPlaceholderText("•••••••• сохранён")
+        if self.stt_key.text().strip():
+            self.stt_key_changed.emit(self.stt_key.text().strip())
+            self.stt_key.clear()
+            self.stt_key.setPlaceholderText("•••••••• сохранён")
         self._base = s
         self.saved.emit(s)
         self.err.setText("Сохранено ✓")

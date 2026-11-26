@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import requests
 
 from .base import Provider, ProviderUnavailable, SolveError
+from .audio import Audio
 from .images import Image
 
 
@@ -17,6 +18,7 @@ REQUEST_ERRORS = (400, 413, 422)      # дело в самом запросе, �
 
 class ApiProvider(Provider):
     last_info = ""
+    supports_audio = True          # input_audio в chat/completions; поймёт ли его модель — решает настройка аудирования
     def __init__(self, conf: dict):
         self.url = conf["base_url"].rstrip("/") + "/chat/completions"
         self.model = conf["model"]
@@ -35,14 +37,16 @@ class ApiProvider(Provider):
             raise SolveError("Не задан ключ API. Запустите `yaklass-bot setup` или задайте "
                              f"переменную окружения {env or 'OPENAI_API_KEY'}.")
 
-    def ask(self, prompt: str, images: Sequence[Image] = ()) -> str:
+    def ask(self, prompt: str, images: Sequence[Image] = (), audio: Sequence[Audio] = ()) -> str:
         headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
         content: str | list = prompt
-        if images:
+        if images or audio:
             content = [{"type": "text", "text": prompt}] + [
                 {"type": "image_url", "image_url": {
                     "url": f"data:{im.mime};base64,{base64.b64encode(im.data).decode()}"}}
-                for im in images]
+                for im in images] + [
+                {"type": "input_audio", "input_audio": {"data": base64.b64encode(a.data).decode(), "format": a.format}}
+                for a in audio]
         body = {"model": self.model, "temperature": self.temperature,
                 "messages": [{"role": "user", "content": content}]}
         if self.json_mode:

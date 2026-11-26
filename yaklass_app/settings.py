@@ -36,7 +36,9 @@ class AppSettings:
     solver_mode: str = "server"
     own_api: dict = field(default_factory=lambda: {
         "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "vision": True, "json_mode": False,
-        "temperature": 0.0})
+        "temperature": 0.0,
+        # аудирование: transcribe | native | off; адрес STT пусто — как base_url (и ключ тот же)
+        "audio_mode": "transcribe", "stt_base_url": "", "stt_model": "whisper-1"})
     searxng_url: str = ""
     search_mode: str = "always"               # always | model | off (только для own)
     pace: dict = field(default_factory=lambda: Pace().to_dict())
@@ -66,6 +68,8 @@ class AppSettings:
             errs.append("Неизвестный режим решателя")
         if self.server_url and not self.server_url.startswith(("https://", "http://")):
             errs.append("Адрес сервера должен начинаться с https://")
+        if self.own_api.get("audio_mode", "transcribe") not in ("transcribe", "native", "off"):
+            errs.append("Неизвестный режим аудирования")
         if self.solver_mode == "own" and not self.own_api.get("base_url"):
             errs.append("Укажите адрес своего API")
         if not 5 <= self.poll_minutes <= 1440:
@@ -201,3 +205,12 @@ class Store:
     @own_api_key.setter
     def own_api_key(self, v: str) -> None:
         self.secrets.set("own-api-key", v)
+
+    @property
+    def own_stt_key(self) -> str:
+        """Ключ сервиса расшифровки аудио, если он отдельный (иначе используется own_api_key)."""
+        return self.secrets.get("own-stt-key")
+
+    @own_stt_key.setter
+    def own_stt_key(self, v: str) -> None:
+        self.secrets.set("own-stt-key", v)

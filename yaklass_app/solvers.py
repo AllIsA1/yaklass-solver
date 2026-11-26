@@ -13,6 +13,8 @@ from yaklass_bot.connect import hide_host
 from yaklass_bot.models import Task
 from yaklass_bot.pipeline import solve as pipeline_solve
 from yaklass_bot.solver.api import ApiProvider
+from yaklass_bot.solver.audio import REMOTE_PREFIX as AUDIO_PREFIX
+from yaklass_bot.solver.audio import AudioConf, AudioHelper, AudioUnsupported
 from yaklass_bot.solver.base import Answer, FatalSolveError, SolveError
 
 from .settings import AppSettings
@@ -41,7 +43,7 @@ def serialize_task(task: Task) -> dict:
     """Task -> тело запроса /v1/solve (см. docs/PROTOCOL.md)."""
     return {"task": {
         "position": task.position, "title": task.title, "points": task.points, "text": task.text,
-        "images": list(task.images),
+        "images": list(task.images), "audio": list(task.audio), "has_audio": task.has_audio,
         "fields": [{"name": f.name, "kind": f.kind, "max_points": f.max_points, "size": f.size,
                     "options": [asdict(o) for o in f.options]} for f in task.fields]}}
 
@@ -109,6 +111,8 @@ class RemoteSolver:
                 self._sleep(wait)
                 last = "слишком частые запросы"
                 continue
+            if r.status_code == 422 and detail.startswith(AUDIO_PREFIX):
+                raise AudioUnsupported(detail[len(AUDIO_PREFIX):])
             if r.status_code in (413, 422):
                 raise SolveError(f"сервер отклонил задание: {detail or r.status_code}")
             if r.status_code in TRANSIENT:                 # шлюз/прокси/сеть: сервер на секунду недоступен — повторить
@@ -126,21 +130,25 @@ class RemoteSolver:
 class LocalSolver:
     """Свой API: ключ и запросы остаются на этом ПК."""
 
-    def __init__(self, s: AppSettings, api_key: str):
+    def __init__(self, s: AppSettings, api_key: str, stt_key: str = ""):
         a = dict(s.own_api)
         a["api_key"], a["api_key_env"] = api_key, ""
         self.provider = ApiProvider(a)
+        stt_url = str(a.get("stt_base_url", "") or "").strip()
+        self.audio = AudioHelper(AudioConf(
+            mode=str(a.get("audio_mode", "transcribe")), base_url=stt_url or a["base_url"],
+            model=str(a.get("stt_model", "") or "whisper-1"), api_key=stt_key or api_key))
         self.cfg = Config()
         self.cfg.searxng_url = s.searxng_url.rstrip("/")
         self.cfg.search_mode = s.search_mode
 
     def solve(self, task: Task, log: Log = lambda m: None) -> Answer:
-        return pipeline_solve(self.cfg, self.provider, task, log=log)
+        return pipeline_solve(self.cfg, self.provider, task, log=log, audio=self.audio)
 
 
-def make_solver(s: AppSettings, token: str, own_api_key: str):
+def make_solver(s: AppSettings, token: str, own_api_key: str, own_stt_key: str = ""):
     if s.solver_mode == "own":
-        return LocalSolver(s, own_api_key)
+        return LocalSolver(s, own_api_key, own_stt_key)
     if not (s.server_url and token):
         raise FatalSolveError("Приложение не привязано к серверу: введите код из бота (/link).")
     return RemoteSolver(s.server_url, token)

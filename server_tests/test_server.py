@@ -319,3 +319,33 @@ def test_plain_http_get_on_ws_endpoint_gives_actionable_hint(env):
     """nginx без Upgrade-заголовков превращает WebSocket в обычный GET: раньше — безликий 404."""
     r = env.client.get("/v1/agent")
     assert r.status_code == 426 and "Upgrade" in r.json()["detail"] and "nginx" in r.json()["detail"]
+
+
+# ---------- аудирование ----------
+
+AUDIO_TASK = {"task": {"position": 5, "title": "Listening", "text": "[AUDIO:1]\nDaniel wants to visit every [[e8r1|ta]]",
+                       "audio": ["https://abc.selcdn.net/x/listen.mp3"],
+                       "fields": [{"name": "e8r1|ta", "kind": "text"}]}}
+
+
+def test_audio_task_transcribed_on_server(env, monkeypatch):
+    import yaklass_server.solver_service as ss
+    from yaklass_bot.solver import audio as audio_mod
+    monkeypatch.setattr(ss, "_is_public", lambda h: True)        # без DNS в тестах
+    seen = []
+    monkeypatch.setattr(audio_mod, "download", lambda url, allow_redirects=True: seen.append(url) or audio_mod.Audio(b"x", "mp3"))
+    monkeypatch.setattr(audio_mod.Transcriber, "transcribe", lambda self, clip, language="": "I want to visit every country")
+    _, token = make_agent(env)
+    r = env.client.post("/v1/solve", json=AUDIO_TASK, headers=auth(token))
+    assert r.status_code == 200, r.text
+    assert seen == ["https://abc.selcdn.net/x/listen.mp3"] and "visit every country" in env.model.prompts[-1]
+
+
+def test_audio_from_foreign_host_not_downloaded_and_not_charged(env, monkeypatch):
+    from yaklass_bot.solver import audio as audio_mod
+    monkeypatch.setattr(audio_mod, "download", lambda *a, **k: pytest.fail("скачивать с чужого хоста нельзя"))
+    _, token = make_agent(env)
+    bad = {"task": {**AUDIO_TASK["task"], "audio": ["https://169.254.169.254/latest.mp3"]}}
+    r = env.client.post("/v1/solve", json=bad, headers=auth(token))
+    assert r.status_code == 422 and r.json()["detail"].startswith("аудирование: ")
+    assert env.db.used_today(100) == 0 and not env.model.prompts

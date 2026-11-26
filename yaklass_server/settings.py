@@ -74,6 +74,11 @@ class Settings:
     llm_fallback_vision: bool | None = None
     llm_fallback_json_mode: bool | None = None
     llm_fallback_cooldown_s: int = 60
+    # аудирование: transcribe (Whisper -> текст модели) | native (звук прямо в модель) | off
+    audio_mode: str = "transcribe"
+    stt_base_url: str = ""               # пусто — как LLM_BASE_URL
+    stt_model: str = "whisper-1"
+    stt_api_key: str = ""                # пусто — как LLM_API_KEY (если адрес STT тоже не задан)
     # поиск
     searxng_url: str = ""
     search_mode: str = "always"          # always | model | off
@@ -131,6 +136,10 @@ class Settings:
             llm_fallback_vision=b("LLM_FALLBACK_VISION", True) if g("LLM_FALLBACK_VISION") else None,
             llm_fallback_json_mode=b("LLM_FALLBACK_JSON_MODE", False) if g("LLM_FALLBACK_JSON_MODE") else None,
             llm_fallback_cooldown_s=i("LLM_FALLBACK_COOLDOWN_S", 60),
+            audio_mode=g("AUDIO_MODE", "transcribe").lower(),
+            stt_base_url=g("STT_BASE_URL").rstrip("/"),
+            stt_model=g("STT_MODEL", "whisper-1"),
+            stt_api_key=g("STT_API_KEY"),
             searxng_url=g("SEARXNG_URL").rstrip("/"),
             search_mode=g("SEARCH_MODE", "always").lower(),
             image_hosts=tuple(h.strip().lower() for h in g("IMAGE_HOSTS", "selcdn.net,yaklass.ru").split(",") if h.strip()),
@@ -158,5 +167,7 @@ class Settings:
             parse_mtproxy(self.mtproxy)               # ProxyError (ValueError) с понятным текстом
         if self.registration not in ("open", "invite", "closed"):
             raise ValueError("REGISTRATION должен быть open, invite или closed")
+        if self.audio_mode not in ("transcribe", "native", "off"):
+            raise ValueError("AUDIO_MODE должен быть transcribe, native или off")
         if self.search_mode not in ("always", "model", "off"):
             raise ValueError("SEARCH_MODE должен быть always, model или off")

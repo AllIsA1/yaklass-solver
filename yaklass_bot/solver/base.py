@@ -6,11 +6,15 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..lang import is_english
 from ..models import Field, Task
 from .images import Image, download
 from .search import SearchError
+
+if TYPE_CHECKING:
+    from .audio import Audio
 
 
 class SolveError(RuntimeError):
@@ -32,9 +36,10 @@ class EmptyReply(SolveError):
 
 class Provider(ABC):
     supports_images = False
+    supports_audio = False         # умеет приложить звук к запросу (режим аудирования native)
 
     @abstractmethod
-    def ask(self, prompt: str, images: Sequence[Image] = ()) -> str: ...
+    def ask(self, prompt: str, images: Sequence[Image] = (), audio: Sequence["Audio"] = ()) -> str: ...
 
     def close(self) -> None:
         pass
@@ -87,13 +92,36 @@ ENGLISH_RULES = (
     "- Перед ответом кратко (по строке на поле) обоснуй выбор в поле \"reasoning\"; потом дай \"answers\".")
 
 
+AUDIO_RULES = (
+    "Это задание на аудирование (в условии отмечено [AUDIO:n]). Ответы бери из аудиозаписи, а не из общих "
+    "знаний: что именно сказано в записи. Слово в поле пиши в правильном написании и в той форме, что требует "
+    "предложение.")
+
+
+def _audio_lines(task: Task, n_audio: int) -> list[str]:
+    if task.audio_text:
+        out = []
+        for i, t in enumerate(task.audio_text, 1):
+            out += [f"Расшифровка аудиозаписи [AUDIO:{i}] (автоматическая, в написании отдельных слов возможны "
+                    "ошибки распознавания — исправляй их по смыслу):", f"«{t}»", ""]
+        return out
+    if n_audio:
+        return [f"К запросу приложены аудиозаписи ({n_audio}) в порядке появления в условии ([AUDIO:1]"
+                + (f"…[AUDIO:{n_audio}]" if n_audio > 1 else "") + "). Внимательно прослушай их.", ""]
+    if task.has_audio:
+        return ['В задании есть аудиозапись, она недоступна. Если ответ зависит от неё — поставь "confidence": 0.', ""]
+    return []
+
+
 def build_prompt(task: Task, context: str = "", img_no: dict[str, int] | None = None,
-                 max_searches: int = 0) -> str:
-    """img_no: url картинки -> её номер среди приложенных к запросу."""
+                 max_searches: int = 0, n_audio: int = 0) -> str:
+    """img_no: url картинки -> её номер среди приложенных к запросу; n_audio — сколько записей приложено (native)."""
     img_no = img_no or {}
     english = is_english(task)
+    listening = bool(task.audio_text or n_audio)
     lines = [SYSTEM] + ([_search_rules(max_searches)] if max_searches else []) + (
-        [ENGLISH_RULES] if english else []) + ["", "Задание:", task.text, ""]
+        [ENGLISH_RULES] if english else []) + ([AUDIO_RULES] if listening else []) + [
+        "", "Задание:", task.text, ""] + _audio_lines(task, n_audio)
     main = [u for u in task.images]
     if main:
         have = [f"№{img_no[u]}" for u in main if u in img_no]
@@ -204,9 +232,11 @@ def parse_answer(task: Task, reply: str) -> Answer:
 def solve_task(provider: Provider, task: Task, context: str = "", retries: int = 1,
                image_loader: Callable[[str], Image | None] = download,
                search: Callable[[str], str] | None = None, max_searches: int = 3,
-               on_search: Callable[[str, str | None], None] | None = None) -> Answer:
+               on_search: Callable[[str, str | None], None] | None = None,
+               audio: Sequence["Audio"] = ()) -> Answer:
     """search(query) -> текст результатов (или SearchError). Модель сама решает, искать ли:
-    ответом {"search": "..."} вместо итогового JSON. on_search(query, error) — для вывода в консоль."""
+    ответом {"search": "..."} вместо итогового JSON. on_search(query, error) — для вывода в консоль.
+    audio — записи для модели, понимающей звук (режим native); расшифровки (transcribe) лежат в task.audio_text."""
     images: list[Image] = []
     img_no: dict[str, int] = {}
     if provider.supports_images:
@@ -215,11 +245,11 @@ def solve_task(provider: Provider, task: Task, context: str = "", retries: int =
             if img is not None:
                 images.append(img)
                 img_no[url] = len(images)
-    prompt = build_prompt(task, context, img_no, max_searches if search else 0)
+    prompt = build_prompt(task, context, img_no, max_searches if search else 0, n_audio=len(audio))
     used = bad = 0
     last: Exception | None = None
     while True:
-        reply = provider.ask(prompt, images)
+        reply = provider.ask(prompt, images, audio) if audio else provider.ask(prompt, images)
         try:
             data = _extract_json(reply)
         except SolveError as e:

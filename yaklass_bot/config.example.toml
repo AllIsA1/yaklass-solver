@@ -22,6 +22,16 @@ temperature = 0.0
 vision = true
 json_mode = false
 
+[llm.audio]
+# аудирование: transcribe — расшифровка через /audio/transcriptions (Whisper), текст уходит модели;
+# native — запись прикладывается к запросу (модель должна понимать звук: Gemini, gpt-4o-audio); off
+mode = "transcribe"
+# адрес и ключ сервиса расшифровки; пусто — как у [llm.api]. Пример Groq: https://api.groq.com/openai/v1
+base_url = ""
+model = "whisper-1"
+api_key_env = ""
+api_key_file = ""
+
 [run]
 # "" = встроенный Chromium Playwright; "chrome" / "msedge" = установленный браузер
 channel = ""

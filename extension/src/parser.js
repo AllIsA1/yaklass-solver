@@ -80,7 +80,17 @@
     return inp && inp.getAttribute("type") === "radio" ? name : name.split("|")[0] + "|*";
   }
 
-  function render(node, out, images) {
+  function audioSrc(el) {                                              // <audio src> или первый <source src>
+    let src = (el.getAttribute("src") || "").trim();
+    if (!src) {
+      const s = q1(el, "source[src]");
+      src = s ? (s.getAttribute("src") || "").trim() : "";
+    }
+    return src ? abs(src) : "";
+  }
+
+  function render(node, out, images, audio) {
+    audio = audio || [];
     for (const ch of node.childNodes) {
       if (ch.nodeType === 8) continue;                                   // комментарий
       if (ch.nodeType === 3) { out.push(ch.nodeValue.replace(/ /g, " ")); continue; }
@@ -106,21 +116,27 @@
       } else if (name === "img") {
         images.push(abs(ch.getAttribute("src") || ""));
         out.push(` [IMG:${ch.getAttribute("alt") || ""}] `);
+      } else if (name === "audio") {
+        const src = audioSrc(ch);
+        if (src) {
+          audio.push(src);
+          out.push(`\n[AUDIO:${audio.length}]\n`);
+        }
       } else if (name === "meta" || name === "script" || name === "style") {
         continue;
       } else if (name === "td" || name === "th") {
-        out.push(` ${inline(ch, images)} |`);
+        out.push(` ${inline(ch, images, audio)} |`);
       } else {
         if (BLOCK_TAGS.has(name)) out.push("\n");
-        render(ch, out, images);
+        render(ch, out, images, audio);
         if (BLOCK_TAGS.has(name)) out.push("\n");
       }
     }
   }
 
-  function inline(node, images) {
+  function inline(node, images, audio) {
     const out = [];
-    render(node, out, images || []);
+    render(node, out, images || [], audio);
     return out.join("").replace(/ /g, " ").replace(/\s+/g, " ").trim();
   }
 
@@ -211,8 +227,8 @@
     const form = q1(doc, "form.taskForm");
     const wrapper = q1(doc, "#taskhtml");
     if (!wrapper) throw new Error("не найден #taskhtml — это не страница задания");
-    const out = [], images = [];
-    render(wrapper, out, images);
+    const out = [], images = [], audio = [];
+    render(wrapper, out, images, audio);
     const text = out.join("").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
     const pts = q1(doc, ".obj-points");
     const cur = q1(doc, ".test-ex-nav-v2__item.is-current");
@@ -234,7 +250,8 @@
     return {
       position, title, points: pts ? num(pts.textContent) : null, text,
       fields: collectFields(wrapper), images,
-      has_audio: !!q1(wrapper, "audio, [class*=audio]"),
+      has_audio: audio.length > 0 || !!q1(wrapper, "audio, [class*=audio]"),
+      audio, audio_text: [],
       form_action: form ? form.getAttribute("action") || "" : "",
       time_left_s: timer ? int(timer.getAttribute("data-left-time")) : null,
       is_theory: pageKind(doc) === "theory",

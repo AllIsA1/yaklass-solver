@@ -154,6 +154,7 @@ class MainWindow(QMainWindow):
         self.home.dismiss_update_requested.connect(self.home.hide_update)
         self.home.install_update_requested.connect(self.do_install_update)
         self.settings.key_changed.connect(lambda k: setattr(self.store, "own_api_key", k))
+        self.settings.stt_key_changed.connect(lambda k: setattr(self.store, "own_stt_key", k))
         self.modeltest.start_requested.connect(self.start_model_test)
         self.modeltest.stop_requested.connect(self.agent.stop_model_test)
         self.load_settings()
@@ -203,7 +204,7 @@ class MainWindow(QMainWindow):
     def load_settings(self) -> None:
         s = self.store.load()
         self.apply_theme(s.theme)
-        self.settings.load(s, bool(self.store.own_api_key))
+        self.settings.load(s, bool(self.store.own_api_key), bool(self.store.own_stt_key))
         self.home.set_login_mode(s.browser_mode == "cookies", s.cookie_browser)
         self.modeltest.set_available(s.solver_mode == "own")
         self.refresh_link_state()
